@@ -196,7 +196,6 @@ class Parser:
 
       #Make a parser for this kernel
       parser = Parser(kernel_name, source_code)
-      Parser._dump(node)
 
       #Get the function's arguments
       for arg in node.args.args:
