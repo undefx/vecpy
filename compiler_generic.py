@@ -56,12 +56,28 @@ class Compiler_Generic:
             src += '%s%s = %s;\n'%(indent, stmt.var.name, stmt.expr.name)
           elif isinstance(stmt.expr, BinaryOperation):
             op = stmt.expr.op
+            var = stmt.var.name
+            left = stmt.expr.left.name
+            right = stmt.expr.right.name
             if op in ('+', '-', '*', '/'):
-              src += '%s%s = %s %s %s;\n'%(indent, stmt.var.name, stmt.expr.left.name, op, stmt.expr.right.name)
+              src += '%s%s = %s %s %s;\n'%(indent, var, left, op, right)
             elif op == '**':
-              src += '%s%s = pow(%s, %s);\n'%(indent, stmt.var.name, stmt.expr.left.name, stmt.expr.right.name)
+              src += '%s%s = pow(%s, %s);\n'%(indent, var, left, right)
+            elif op in Math.binary_functions:
+              src += '%s%s = %s(%s, %s);\n'%(indent, var, op, left, right)
             else:
               raise Exception('Unknown operator (%s)'%(op))
+          elif isinstance(stmt.expr, UnaryOperation):
+            op = stmt.expr.op
+            var = stmt.var.name
+            input = stmt.expr.var.name
+            if op in ('',):
+              #todo - built-in unary operations
+              pass
+            elif op in Math.unary_functions:
+              src += '%s%s = %s(%s);\n'%(indent, var, op, input)
+            else:
+              raise Exception('Unknown unary operator/function (%s)'%(op))
           else:
             raise Exception('bad assignment');
         else:

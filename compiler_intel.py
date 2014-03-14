@@ -10,6 +10,7 @@ class Compiler_Intel:
     vecType = '__m128'
     size = 4
     scratch = ('tempA', 'tempB')
+    src += '//Target Architecture: %s\n'%(arch['name'])
     #Includes
     src += '//Includes\n'
     src += '#include <math.h>\n'
@@ -44,11 +45,17 @@ class Compiler_Intel:
     #Helper functions
     def binary_function(var, func, left, right):
       src = ''
-      #src = '%s//Call to external function "%s"\n'%(indent, func)
       src += '%s_mm_store_ps(%s, %s);\n'%(indent, scratch[0], left)
       src += '%s_mm_store_ps(%s, %s);\n'%(indent, scratch[1], right)
       for i in range(size):
         src += '%s%s[%d] = %s(%s[%d], %s[%d]);\n'%(indent, scratch[0], i, func, scratch[0], i, scratch[1], i)
+      src += '%s%s = _mm_load_ps(%s);\n'%(indent, var, scratch[0])
+      return src
+    def unary_function(var, func, input):
+      src = ''
+      src += '%s_mm_store_ps(%s, %s);\n'%(indent, scratch[0], input)
+      for i in range(size):
+        src += '%s%s[%d] = %s(%s[%d]);\n'%(indent, scratch[0], i, func, scratch[0], i)
       src += '%s%s = _mm_load_ps(%s);\n'%(indent, var, scratch[0])
       return src
     #Begin input loop
@@ -78,6 +85,9 @@ class Compiler_Intel:
             src += '%s%s = %s;\n'%(indent, stmt.var.name, stmt.expr.name)
           elif isinstance(stmt.expr, BinaryOperation):
             op = stmt.expr.op
+            var = stmt.var.name
+            left = stmt.expr.left.name
+            right = stmt.expr.right.name
             if op in ('+', '-', '*', '/'):
               if op == '+':
                 func = '_mm_add_ps'
@@ -87,17 +97,25 @@ class Compiler_Intel:
                 func = '_mm_mul_ps'
               elif op == '/':
                 func = '_mm_div_ps'
-              src += '%s%s = %s(%s, %s);\n'%(indent, stmt.var.name, func, stmt.expr.left.name, stmt.expr.right.name)
+              src += '%s%s = %s(%s, %s);\n'%(indent, var, func, left, right)
             elif op == '**':
               func = 'pow'
-              src += binary_function(stmt.var.name, func, stmt.expr.left.name, stmt.expr.right.name)
-              #src += '%s_mm_store_ps(%s, %s);\n'%(indent, scratch[0], stmt.expr.left.name)
-              #src += '%s_mm_store_ps(%s, %s);\n'%(indent, scratch[1], stmt.expr.right.name)
-              #for i in range(size):
-              #  src += '%s%s[%d] = pow(%s[%d], %s[%d]);\n'%(indent, scratch[0], i, scratch[0], i, scratch[1], i)
-              #src += '%s%s = _mm_load_ps(%s);\n'%(indent, stmt.var.name, scratch[0])
+              src += binary_function(var, func, left, right)
+            elif op in Math.binary_functions:
+              src += binary_function(var, op, left, right)
             else:
-              raise Exception('Unknown operator (%s)'%(op))
+              raise Exception('Unknown binary operator/function (%s)'%(op))
+          elif isinstance(stmt.expr, UnaryOperation):
+            op = stmt.expr.op
+            var = stmt.var.name
+            input = stmt.expr.var.name
+            if op in ('',):
+              #todo - built-in unary operations
+              pass
+            elif op in Math.unary_functions:
+              src += unary_function(var, op, input)
+            else:
+              raise Exception('Unknown unary operator/function (%s)'%(op))
           else:
             raise Exception('bad assignment');
         else:

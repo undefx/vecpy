@@ -1,3 +1,4 @@
+import subprocess
 from kernel import *
 from compiler_constants import *
 from compiler_generic import Compiler_Generic
@@ -54,11 +55,11 @@ class Compiler:
     src += ' printf("Arguments are invalid\\n"); return false; }\n'
     src += '%sprintf("Arguments are valid\\n");\n'%(indent)
     src += '%sint numThreads = 2;\n'%(indent)
+    src += '%sunsigned int num = args->N / numThreads;\n'%(indent)
     src += '%sunsigned int offset = 0;\n'%(indent)
     src += '%spthread_t* threads = new pthread_t[numThreads];\n'%(indent)
     src += '%sKernelArgs* threadArgs = new KernelArgs[numThreads];\n'%(indent)
     src += '%sfor(int t = 0; t < numThreads; t++) {\n'%(indent)
-    src += '%s%sunsigned int num = 4;\n'%(indent, indent)
     for arg in k.get_arguments():
       src += '%s%sthreadArgs[t].%s = &args->%s[offset];\n'%(indent, indent, arg.name, arg.name)
     src += '%s%sthreadArgs[t].N = num;\n'%(indent, indent)
@@ -259,12 +260,29 @@ class Compiler:
     else:
       raise Exception('Target architecture not implemented (%s)'%(arch['name']))
     #Print code to stdout
-    print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
+    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
     #Save code to file
     file_name = Compiler.get_kernel_file(k)
     with open(file_name, 'w') as file:
       file.write(src)
-    print('Saved to file: %s'%(file_name))
+    #print('Saved to file: %s'%(file_name))
+
+  def build(k, build_flags):
+    indent = get_indent()
+    src = ''
+    #Generate the build script
+    src += 'NAME=VecPy_%s.so\n'%(k.name)
+    src += 'rm -f $NAME\n'
+    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s\n'%(' '.join(build_flags), Compiler.get_core_file(k))
+    src += 'nm $NAME | grep " T "\n'
+    #Save code to file
+    file_name = 'build.sh'
+    with open(file_name, 'w') as file:
+      file.write(src)
+    #print('Saved to file: %s'%(file_name))
+    #Run the build script
+    subprocess.call(['chmod', '+x', file_name])
+    subprocess.check_call(['./' + file_name], shell=True)
 
   def compile(k, arch, bindings=(Binding.all,)):
     #Sanity checks
@@ -276,15 +294,21 @@ class Compiler:
     Compiler.compile_kernel(k, arch)
     #Generate API for each language
     include_files = []
+    build_flags = [arch['flag']]
     if Binding.all in bindings or Binding.cpp in bindings:
       Compiler.compile_cpp(k)
       include_files.append(Compiler.get_cpp_file(k))
     if Binding.all in bindings or Binding.python in bindings:
       Compiler.compile_python(k)
       include_files.append(Compiler.get_python_file(k))
+      build_flags.append('-lpython3.3m')
+      build_flags.append('-I/usr/include/python3.3m/')
     if Binding.all in bindings or Binding.java in bindings:
       Compiler.compile_java(k)
       include_files.append(Compiler.get_java_file(k))
+      build_flags.append('-I/usr/java/latest/include/')
+      build_flags.append('-I/usr/java/latest/include/linux/')
     #Generate the core
     Compiler.compile_core(k, include_files)
-    #todo: build
+    #Compile the module
+    Compiler.build(k, build_flags)

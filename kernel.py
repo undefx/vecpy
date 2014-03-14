@@ -1,6 +1,6 @@
 class Variable:
   index = 0
-  def __init__(self, name, is_arg, value):
+  def __init__(self, name, is_arg, is_temp, value):
     if name is None:
       if value is None:
         prefix = 'var'
@@ -9,6 +9,7 @@ class Variable:
       name = '%s%03d'%(prefix, Variable.index)
     self.name = name
     self.is_arg = is_arg
+    self.is_temp = is_temp
     self.value = value
     self.index = Variable.index
     self.input = False
@@ -22,11 +23,64 @@ class Operator:
   divide = '/'
   pow = '**'
 
+class Math:
+  binary_functions = (
+    'hypot',
+    #'copysign',
+    #'fmod',
+    #'ldexp',
+    #'log',
+    'pow',
+    'atan2',
+  )
+  unary_functions = (
+    'ceil',
+    'fabs',
+    #'factorial',
+    'floor',
+    #'frexp',
+    #'fsum',
+    #'isfinite',
+    #'isinf',
+    #'isnan',
+    #'modf',
+    #'trunc',
+    'exp',
+    #'expm1',
+    #'log1p',
+    #'log2',
+    #'log10',
+    'sqrt',
+    'acos',
+    'asin',
+    'atan',
+    'cos',
+    'sin',
+    'tan',
+    #'degrees',
+    #'radians',
+    'acosh',
+    'asinh',
+    'atanh',
+    'cosh',
+    'sinh',
+    'tanh',
+    #'erf',
+    #'erfc',
+    #'gamma',
+    #'lgamma',
+  )
+
 class BinaryOperation:
   def __init__(self, left, op, right):
     self.left = left
     self.op = op
     self.right = right
+
+class UnaryOperation:
+  def __init__(self, op, var):
+    self.op = op
+    self.var = var
 
 class Assignment:
   def __init__(self, var, expr):

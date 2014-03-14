@@ -7,6 +7,8 @@ import ast
 import inspect
 #Language-independent kernel
 import kernel
+#Math constants
+import math
 
 #===========================================================
 # Parser class
@@ -18,25 +20,26 @@ class Parser:
     self.docstring = None
 
   def add_argument(self, name):
-    return self.kernel.add_variable(kernel.Variable(name, True, None))
+    return self.kernel.add_variable(kernel.Variable(name, True, False, None))
 
   def add_variable(self, name):
     var = self.kernel.get_variable(name)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(name, False, None))
+      var = self.kernel.add_variable(kernel.Variable(name, False, name is None, None))
     return var
 
   def add_literal(self, value):
     var = self.kernel.get_literal(value)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(None, False, value))
+      var = self.kernel.add_variable(kernel.Variable(None, False, False, value))
     return var
 
   def _dump(x, label=''):
     print('\n', '*' * 10, label, '*' * 10, '\n', ast.dump(x, annotate_fields=True, include_attributes=True), '\n')
 
-  def binop(self, node):
-    var = self.add_variable(None)
+  def binop(self, node, var):
+    if var == None:
+      var = self.add_variable(None)
     left = self.expression(node.left)
     right = self.expression(node.right)
     if isinstance(node.op, ast.Add):
@@ -57,23 +60,63 @@ class Parser:
     self.kernel.add(statement)
     return var
 
-  #def unaryop(self, node):
-  #  operand = self.expression(node.operand)
-  #  if isinstance(node.op, ast.UAdd):
-  #    return operand
-  #  if isinstance(node.op, ast.USub):
-  #    if 'value' in operand:
-  #      if -operand['value'] in self.literals:
-  #        return self.literals[-operand['value']]
-  #      else:
-  #        return self.add_literal(-operand['value'])
-  #    else:
-  #      raise Exception('todo: negate an expression')
-  #  else:
-  #    raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
+  def unaryop(self, node):
+    operand = self.expression(node.operand)
+    if isinstance(node.op, ast.UAdd):
+      return operand
+    if isinstance(node.op, ast.USub):
+      if operand.value is not None:
+        return self.add_literal(-operand.value)
+      else:
+        raise Exception('todo: negate an expression')
+    else:
+      raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
 
-  def expression(self, expr):
-    var = None
+  def call(self, expr, var):
+    if var == None:
+      var = self.add_variable(None)
+    if isinstance(expr.func, ast.Attribute):
+      mod = expr.func.value.id
+      func = expr.func.attr
+    elif isinstance(expr.func, ast.Name):
+      mod = '__main__'
+      func = expr.func.id
+    else:
+      raise Exception('Unexpected function call (%s)'%(expr.func.__class__))
+    args = []
+    for arg in expr.args:
+      args.append(self.expression(arg))
+    if mod == 'math':
+      if func in kernel.Math.binary_functions and len(args) == 2:
+        operation = kernel.BinaryOperation(args[0], func, args[1])
+      elif func in kernel.Math.unary_functions and len(args) == 1:
+        operation = kernel.UnaryOperation(func, args[0])
+      else:
+        raise Exception('Call not supported or invalid arguments (%s.%s)'%(mod, func))
+    else:
+      raise Exception('Call not supported (module %s)'%(mod))
+    assignment = kernel.Assignment(var, operation)
+    statement = kernel.Statement(assignment)
+    self.kernel.add(statement)
+    return var
+
+  def attribute(self, attr):
+    mod = attr.value.id
+    name = attr.attr
+    if mod == 'math':
+      if name == 'pi':
+        var = self.add_literal(math.pi)
+        var.name += '_PI'
+      elif name == 'e':
+        var = self.add_literal(math.e)
+        var.name += '_E'
+      else:
+        raise Exception('Contsant not supported (%s.%s)'%(mod, name))
+    else:
+      raise Exception('Constant not supported (module %s)'%(mod))
+    return var
+
+  def expression(self, expr, var=None):
     if isinstance(expr, ast.Num):
       var = self.add_literal(expr.n)
     elif isinstance(expr, ast.Name):
@@ -83,33 +126,62 @@ class Parser:
       if var.is_arg:
         var.input = True
     elif isinstance(expr, ast.BinOp):
-      var = self.binop(expr)
-    #elif isinstance(expr, ast.UnaryOp):
-    #  var = self.unaryop(expr)
+      var = self.binop(expr, var)
+    elif isinstance(expr, ast.UnaryOp):
+      var = self.unaryop(expr)
+    elif isinstance(expr, ast.Call):
+      var = self.call(expr, var)
+    elif isinstance(expr, ast.Attribute):
+      var = self.attribute(expr)
     else:
       raise Exception('Unexpected Expression (%s)'%(expr.__class__))
     return var
 
-  def assign_single(self, src, dst):
-    comment = kernel.Comment(self.source.split('\n')[dst.lineno - 1].strip())
-    self.kernel.add(comment)
-    expr = self.expression(src)
+  def assign_single(self, src, dst, multi=False):
+    #Make or get the destination variable
     var = self.add_variable(dst.id)
-    assignment = kernel.Assignment(var, expr)
-    statement = kernel.Statement(assignment)
-    self.kernel.add(statement)
+    #Set the output flag is the variable is a kernel argument
     if var.is_arg:
       var.output = True
+    #Parse the expression and get the intermediate variable
+    expr = self.expression(src, var if not multi else None)
+    #Don't generate a self assignment
+    if var != expr:
+      #Create a temporary variable if this is a multi-assignment
+      if multi and not expr.is_temp:
+        temp = self.add_variable(None)
+        assignment = kernel.Assignment(temp, expr)
+        statement = kernel.Statement(assignment)
+        self.kernel.add(statement)
+        expr = temp
+      #The final assignment will be added to the kernel later
+      assignment = kernel.Assignment(var, expr)
+      statement = kernel.Statement(assignment)
+      return statement
+    else:
+      return None
 
   def assign(self, stmt):
+    #Add this (python source) line as a (c++ kernel) comment
+    comment = kernel.Comment(self.source.split('\n')[stmt.lineno - 1].strip())
+    self.kernel.add(comment)
+    #Evaluate the assignment(s)
     value = stmt.value
     for i in range(len(stmt.targets)):
       target = stmt.targets[i]
       if isinstance(target, ast.Name):
-        self.assign_single(value, target)
+        result = self.assign_single(value, target)
+        if result is not None:
+          self.kernel.add(result)
       elif isinstance(target, ast.Tuple):
+        #Save intermediate results
+        results = []
+        #Evaluate individual assignments
         for (t, v) in zip(target.elts, stmt.value.elts):
-          self.assign_single(v, t)
+          results.append(self.assign_single(v, t, multi=True))
+        #Execute final assignments after intermediate calculations
+        for result in results:
+          self.kernel.add(result)
       else:
         raise Exception('Unexpected Assignment (%s)'%(target.__class__))
 
