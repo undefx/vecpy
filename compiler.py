@@ -5,6 +5,8 @@ from compiler_generic import Compiler_Generic
 from compiler_intel import Compiler_Intel
 
 class Compiler:
+
+  #Utility functions: output file names
   def get_python_file(k):
     return 'vecpy_%s_python.h'%(k.name)
 
@@ -20,6 +22,7 @@ class Compiler:
   def get_core_file(k):
     return 'vecpy_%s_core.cpp'%(k.name)
 
+  #Generates the core file
   def compile_core(k, include_files):
     indent = get_indent()
     src = ''
@@ -87,10 +90,11 @@ class Compiler:
       file.write(src)
     #print('Saved to file: %s'%(file_name))
 
+  #Generates the C++ API
   def compile_cpp(k):
     indent = get_indent()
     src = ''
-    src += '//c++ entry point\n'
+    src += '//C++ entry point\n'
     #Build the argument string
     arg_str = ''
     for arg in k.get_arguments():
@@ -113,6 +117,7 @@ class Compiler:
       file.write(src)
     #print('Saved to file: %s'%(file_name))
 
+  #Generates the Python API
   def compile_python(k):
     indent = get_indent()
     src = ''
@@ -202,6 +207,7 @@ class Compiler:
       file.write(src)
     #print('Saved to file: %s'%(file_name))
 
+  #Generates the Java API
   def compile_java(k):
     indent = get_indent()
     src = ''
@@ -251,6 +257,7 @@ class Compiler:
       file.write(src)
     #print('Saved to file: %s'%(file_name))
 
+  #Generates the kernel
   def compile_kernel(k, arch):
     #Generate an architecture-specific kernel
     if Architecture.is_generic(arch):
@@ -267,6 +274,7 @@ class Compiler:
       file.write(src)
     #print('Saved to file: %s'%(file_name))
 
+  #Compiles the module
   def build(k, build_flags):
     indent = get_indent()
     src = ''
@@ -284,6 +292,7 @@ class Compiler:
     subprocess.call(['chmod', '+x', file_name])
     subprocess.check_call(['./' + file_name], shell=True)
 
+  #Generates all files and compiles the module
   def compile(k, arch, bindings=(Binding.all,)):
     #Sanity checks
     if arch is None:
