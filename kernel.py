@@ -1,3 +1,8 @@
+"""
+The Kernel is a set of operations to be performed on a set of data.
+"""
+
+
 #Holds information about variables
 class Variable:
   #A unique variable identifier

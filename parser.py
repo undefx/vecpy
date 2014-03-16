@@ -1,3 +1,9 @@
+"""
+The Parser takes the Python source code of a function and
+creates a Kernel object.
+"""
+
+
 #===========================================================
 # Setup
 #===========================================================

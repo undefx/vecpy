@@ -1,3 +1,10 @@
+"""
+The Compiler uses the Parser and the Kernel to translate a pure Python function
+into a native library. This library can be invoked though several language bindings,
+in particular as a native Python module.
+"""
+
+
 import subprocess
 from kernel import *
 from compiler_constants import *
