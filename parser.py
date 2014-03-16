@@ -13,30 +13,41 @@ import math
 #===========================================================
 # Parser class
 #===========================================================
+#Converts Python source code into an abstract kernel
 class Parser:
+
+  #Parser constructor
   def __init__(self, name, source):
+    #Initializes the kernel
     self.kernel = kernel.Kernel(name)
+    #The source code to be parsed
     self.source = source
+    #The docstring of the kernel function
     self.docstring = None
 
+  #Adds an argument to the kernel
   def add_argument(self, name):
     return self.kernel.add_variable(kernel.Variable(name, True, False, None))
 
+  #Adds a variable to the kernel if it hasn't already been defined
   def add_variable(self, name):
     var = self.kernel.get_variable(name)
     if var is None:
       var = self.kernel.add_variable(kernel.Variable(name, False, name is None, None))
     return var
 
+  #Adds a literal to the kernel if it hasn't already been defined
   def add_literal(self, value):
     var = self.kernel.get_literal(value)
     if var is None:
       var = self.kernel.add_variable(kernel.Variable(None, False, False, value))
     return var
 
+  #todo: debugging
   def _dump(x, label=''):
     print('\n', '*' * 10, label, '*' * 10, '\n', ast.dump(x, annotate_fields=True, include_attributes=True), '\n')
 
+  #Parses a binary operation (AST BinOp)
   def binop(self, node, var):
     if var == None:
       var = self.add_variable(None)
@@ -60,6 +71,7 @@ class Parser:
     self.kernel.add(statement)
     return var
 
+  #Parses a unary uperation (AST UnaryOp)
   def unaryop(self, node):
     operand = self.expression(node.operand)
     if isinstance(node.op, ast.UAdd):
@@ -72,6 +84,7 @@ class Parser:
     else:
       raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
 
+  #Parses a function call (AST Call)
   def call(self, expr, var):
     if var == None:
       var = self.add_variable(None)
@@ -100,6 +113,7 @@ class Parser:
     self.kernel.add(statement)
     return var
 
+  #Parses a named attribute (AST Attribute)
   def attribute(self, attr):
     mod = attr.value.id
     name = attr.attr
@@ -116,6 +130,7 @@ class Parser:
       raise Exception('Constant not supported (module %s)'%(mod))
     return var
 
+  #Parses an expression (AST Expr)
   def expression(self, expr, var=None):
     if isinstance(expr, ast.Num):
       var = self.add_literal(expr.n)
@@ -137,6 +152,7 @@ class Parser:
       raise Exception('Unexpected Expression (%s)'%(expr.__class__))
     return var
 
+  #Parses a single assignment
   def assign_single(self, src, dst, multi=False):
     #Make or get the destination variable
     var = self.add_variable(dst.id)
@@ -161,6 +177,7 @@ class Parser:
     else:
       return None
 
+  #Parses (possibly multiple) assignments (AST Assign)
   def assign(self, stmt):
     #Add this (python source) line as a (c++ kernel) comment
     comment = kernel.Comment(self.source.split('\n')[stmt.lineno - 1].strip())
@@ -185,6 +202,7 @@ class Parser:
       else:
         raise Exception('Unexpected Assignment (%s)'%(target.__class__))
 
+  #Parses a single returned element
   def return_single(self, val):
     if not isinstance(val, ast.Name):
       raise Exception('Bad return type (%s)'%(val.__class__))
@@ -194,6 +212,7 @@ class Parser:
     if not var.is_arg:
       raise Exception('Bad return type (%s)'%('not an argument'))
 
+  #Parses (possibly multiple) returns (AST Return)
   def return_(self, ret):
     if ret.value is None:
       raise Exception('Bad return type (%s)'%('must return something'))
@@ -203,6 +222,7 @@ class Parser:
     else:
       self.return_single(ret.value)
 
+  #Parses the docstring of a function
   def docstring_(self, stmt):
     if self.docstring is not None:
       raise Exception('Docstring already defined')
@@ -211,6 +231,7 @@ class Parser:
     self.docstring = stmt.value.s
     self.kernel.set_docstring(self.docstring)
 
+  #Parses statements (AST Stmt)
   def statement(self, stmt):
     if isinstance(stmt, ast.Assign):
       self.assign(stmt)
@@ -225,15 +246,18 @@ class Parser:
   #===========================================================
   # Public interface
   #===========================================================
+  #Parses the kernel using the specified live function
   def parse(kernel):
     return Parser.parseFromSource(inspect.getsource(kernel), kernel.__name__)
 
+  #Parses the kernel defined in a file
   def parseFromFile(file_name, kernel_name):
     #Source file
     with open(file_name, 'r') as file:
       source_code = file.read()
     return Parser.parseFromSource(source_code, kernel_name)
 
+  #Parses the kernel defined in a string of source code
   def parseFromSource(source_code, kernel_name):
     #Parse the source to build the AST
     root = ast.parse(source_code)
@@ -277,8 +301,8 @@ class Parser:
       for stmt in node.body:
         parser.statement(stmt)
 
-      #todo: Finished?
-      print("Done!")
+      #The source code has been parsed, return the abstract kernel
       return parser.kernel
 
-    return None
+    #The kernel wasn't found
+    raise Exception('Kernel function not found (%s)'%(kernel_name))
