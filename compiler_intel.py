@@ -16,7 +16,7 @@ class Compiler_Intel:
     src += ''
     #Function header
     src += '//Kernel function: %s'%(k.name)
-    src += 'static void %s_intel(KernelArgs* args) {'%(k.name)
+    src += 'static void %s_vector(KernelArgs* args) {'%(k.name)
     src += ''
     src.indent()
     #Literals

@@ -12,7 +12,7 @@ class Compiler_Generic:
     src += ''
     #Function header
     src += '//Kernel function: %s'%(k.name)
-    src += 'static void %s_generic(KernelArgs* args) {'%(k.name)
+    src += 'static void %s_scalar(KernelArgs* args) {'%(k.name)
     src += ''
     src.indent()
     #Literals

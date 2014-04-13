@@ -43,7 +43,7 @@ class Compiler:
     src += '//Utility functions'
     src += 'static void* threadStart(void* v) {'
     src.indent()
-    src += '%s_generic((KernelArgs*)v);'%(k.name)
+    src += '%s_vector((KernelArgs*)v);'%(k.name)
     src += 'return NULL;'
     src.unindent()
     src += '}'
@@ -114,7 +114,7 @@ class Compiler:
     for arg in k.get_arguments():
       src += 'lastArgs.%s = &args->%s[offset];'%(arg.name, arg.name)
     src += 'lastArgs.N = args->N - offset;'
-    src += 'simple_generic(&lastArgs);'
+    src += '%s_scalar(&lastArgs);'%(k.name)
     src.unindent()
     src += '}'
     src += 'return true;'
