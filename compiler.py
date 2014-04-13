@@ -30,282 +30,361 @@ class Compiler:
     return 'vecpy_%s_core.cpp'%(k.name)
 
   #Generates the core file
-  def compile_core(k, include_files):
-    indent = get_indent()
-    src = ''
+  def compile_core(k, include_files, num_cores):
+    src = Formatter()
+    src.section('VecPy generated core')
     #Includes
-    src += '//Includes\n'
-    src += '#include <pthread.h>\n'
-    src += '#include <stdio.h>\n'
-    src += '#include "%s"\n'%(Compiler.get_kernel_file(k))
-    src += '\n'
+    src += '//Includes'
+    src += '#include <pthread.h>'
+    src += '#include <stdio.h>'
+    src += '#include "%s"'%(Compiler.get_kernel_file(k))
+    src += ''
     #Utility functions
-    src += '//Utility functions\n';
+    src += '//Utility functions'
     src += 'static void* threadStart(void* v) {'
-    src += ' %s((KernelArgs*)v); return NULL; '%(k.name)
-    src += '}\n'
+    src.indent()
+    src += '%s_generic((KernelArgs*)v);'%(k.name)
+    src += 'return NULL;'
+    src.unindent()
+    src += '}'
     src += 'static bool isAligned(void* data) {'
-    src += ' return reinterpret_cast<unsigned long>(data) %% %dUL == 0UL; '%(16)
-    src += '}\n'
-    src += 'static bool checkArgs(KernelArgs* args) {\n'
-    src += '%sif(args->N %% 4 != 0) {'%(indent)
-    src += ' printf("Input size not a multiple of %d (%%d)\\n", args->N); return false; '%(4)
-    src += '}\n'
+    src.indent()
+    src += 'return reinterpret_cast<unsigned long>(data) %% %dUL == 0UL;'%(16)
+    src.unindent()
+    src += '}'
+    src += 'static bool checkArgs(KernelArgs* args) {'
+    src.indent()
+    src += 'if(args->N %% %d != 0) {'%(4)
+    src.indent()
+    src += 'printf("Input size not a multiple of %d (%%d)\\n", args->N);'%(4)
+    src += 'return false;'
+    src.unindent()
+    src += '}'
     for arg in k.get_arguments():
-      src += '%sif(!isAligned(args->%s)) {'%(indent, arg.name)
-      src += ' printf("Array not aligned (%s)\\n"); return false; '%(arg.name)
-      src += '}\n'
-    src += '%sreturn true;\n'%(indent)
-    src += '}\n'
-    src += '\n'
+      src += 'if(!isAligned(args->%s)) {'%(arg.name)
+      src.indent()
+      src += 'printf("Array not aligned (%s)\\n");'%(arg.name)
+      src += 'return false;'
+      src.unindent()
+      src += '}'
+    src += 'return true;'
+    src.unindent()
+    src += '}'
+    src += ''
     #Unified core for all programming interfaces
-    src += '//Unified core function\n'
-    src += 'static bool run(KernelArgs* args) {\n'
-    src += '%sif(!checkArgs(args)) {'%(indent)
-    src += ' printf("Arguments are invalid\\n"); return false; }\n'
-    src += '%sprintf("Arguments are valid\\n");\n'%(indent)
-    src += '%sint numThreads = 2;\n'%(indent)
-    src += '%sunsigned int num = args->N / numThreads;\n'%(indent)
-    src += '%sunsigned int offset = 0;\n'%(indent)
-    src += '%spthread_t* threads = new pthread_t[numThreads];\n'%(indent)
-    src += '%sKernelArgs* threadArgs = new KernelArgs[numThreads];\n'%(indent)
-    src += '%sfor(int t = 0; t < numThreads; t++) {\n'%(indent)
+    src += '//Unified core function'
+    src += 'static bool run(KernelArgs* args) {'
+    src.indent()
+    src += 'if(!checkArgs(args)) {'
+    src.indent()
+    src += 'printf("Arguments are invalid\\n");'
+    src += 'return false;'
+    src.unindent()
+    src += '}'
+    src += 'const unsigned int numThreads = %d;'%(num_cores)
+    src += 'unsigned int num = args->N / numThreads;'
+    src += 'unsigned int offset = 0;'
+    src += '//Execute on multiple threads'
+    src += 'if(num > 0) {'
+    src.indent()
+    src += 'pthread_t* threads = new pthread_t[numThreads];'
+    src += 'KernelArgs* threadArgs = new KernelArgs[numThreads];'
+    src += 'for(int t = 0; t < numThreads; t++) {'
+    src.indent()
     for arg in k.get_arguments():
-      src += '%s%sthreadArgs[t].%s = &args->%s[offset];\n'%(indent, indent, arg.name, arg.name)
-    src += '%s%sthreadArgs[t].N = num;\n'%(indent, indent)
-    src += '%s%soffset += num;\n'%(indent, indent)
-    src += '%s%spthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);\n'%(indent, indent)
-    src += '%s}\n'%(indent)
-    src += '%sfor(int t = 0; t < numThreads; t++) {'%(indent)
+      src += 'threadArgs[t].%s = &args->%s[offset];'%(arg.name, arg.name)
+    src += 'threadArgs[t].N = num;'
+    src += 'offset += num;'
+    src += 'pthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);'
+    src.unindent()
+    src += '}'
+    src += 'for(int t = 0; t < numThreads; t++) {'
+    src.indent()
     src += ' pthread_join(threads[t], NULL); '
-    src += '}\n'
-    src += '%sdelete [] threads;\n'%(indent)
-    src += '%sdelete [] threadArgs;\n'%(indent)
-    src += '%sreturn true;\n'%(indent)
-    src += '}\n'
-    src += '\n'
+    src.unindent()
+    src += '}'
+    src += 'delete [] threads;'
+    src += 'delete [] threadArgs;'
+    src.unindent()
+    src += '}'
+    src += '//Handle any remaining elements'
+    src += 'if(offset < args->N) {'
+    src.indent()
+    src += 'KernelArgs lastArgs;'
+    for arg in k.get_arguments():
+      src += 'lastArgs.%s = &args->%s[offset];'%(arg.name, arg.name)
+    src += 'lastArgs.N = args->N - offset;'
+    src += 'simple_generic(&lastArgs);'
+    src.unindent()
+    src += '}'
+    src += 'return true;'
+    src.unindent()
+    src += '}'
+    src += ''
     #Additional includes for each programming language
-    src += '//Additional includes for each programming language\n'
+    src += '//Additional includes for each programming language'
     for file in include_files:
-      src += '#include "%s"\n'%(file)
-    src += '\n';
-    #Print code to stdout
-    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
+      src += '#include "%s"'%(file)
+    src += ''
     #Save code to file
     file_name = Compiler.get_core_file(k)
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
 
   #Generates the C++ API
   def compile_cpp(k):
-    indent = get_indent()
-    src = ''
-    src += '//C++ entry point\n'
+    src = Formatter()
+    src.section('VecPy generated entry point: C++')
     #Build the argument string
     arg_str = ''
     for arg in k.get_arguments():
       arg_str += '%s* %s, '%(k.get_type(), arg.name)
     #Wrapper for the core function
-    src += '//Wrapper for the core function\n'
-    src += 'extern "C" bool %s(%sint N) {\n'%(k.name, arg_str)
-    src += '%sKernelArgs args;\n'%(indent)
+    src += '//Wrapper for the core function'
+    src += 'extern "C" bool %s(%sint N) {'%(k.name, arg_str)
+    src.indent()
+    src += 'KernelArgs args;'
     for arg in k.get_arguments():
-      src += '%sargs.%s = %s;\n'%(indent, arg.name, arg.name)
-    src += '%sargs.N = N;\n'%(indent)
-    src += '%sreturn run(&args);\n'%(indent)
-    src += '}\n'
-    src += '\n';
-    #Print code to stdout
-    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
+      src += 'args.%s = %s;'%(arg.name, arg.name)
+    src += 'args.N = N;'
+    src += 'return run(&args);'
+    src.unindent()
+    src += '}'
+    src += ''
     #Save code to file
     file_name = Compiler.get_cpp_file(k)
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
 
   #Generates the Python API
   def compile_python(k):
-    indent = get_indent()
-    src = ''
     type = k.get_type()
     module_name = 'VecPy_' + k.name
     args = k.get_arguments()
-    src += '//Python entry point\n'
+    src = Formatter()
+    src.section('VecPy generated entry point: Python')
     #Includes
-    src += '//Includes\n'
-    src += '#include <Python.h>\n'
-    src += '\n';
+    src += '//Includes'
+    src += '#include <Python.h>'
+    src += ''
     #Wrapper for the core function
-    src += '//Wrapper for the core function\n'
-    src += 'static PyObject* %s_run(PyObject* self, PyObject* pyArgs) {\n'%(k.name)
-    src += '%s//Handles to Python objects and buffers\n'%(indent)
+    src += '//Wrapper for the core function'
+    src += 'static PyObject* %s_run(PyObject* self, PyObject* pyArgs) {'%(k.name)
+    src.indent()
+    src += '//Handles to Python objects and buffers'
     obj_str = ', '.join('*obj_%s'%(arg.name) for arg in args)
     buf_str = ', '.join('buf_%s'%(arg.name) for arg in args)
-    src += '%sPyObject %s;\n'%(indent, obj_str)
-    src += '%sPy_buffer %s;\n'%(indent, buf_str)
-    src += '%s//Get Python objects\n'%(indent)
+    src += 'PyObject %s;'%(obj_str)
+    src += 'Py_buffer %s;'%(buf_str)
+    src += '//Get Python objects'
     obj_str = ', '.join('&obj_%s'%(arg.name) for arg in args)
-    src += '%sif(!PyArg_ParseTuple(pyArgs, "%s", %s)) {'%(indent, 'O' * len(args), obj_str)
-    src += ' printf("Error retrieving Python objects\\n"); return NULL; '
-    src += '}\n'
-    src += '%s//Get Python buffers from Python objects\n'%(indent)
+    src += 'if(!PyArg_ParseTuple(pyArgs, "%s", %s)) {'%('O' * len(args), obj_str)
+    src.indent()
+    src += 'printf("Error retrieving Python objects\\n");'
+    src += 'return NULL;'
+    src.unindent()
+    src += '}'
+    src += '//Get Python buffers from Python objects'
     for arg in args:
-      src += '%sif(PyObject_GetBuffer(obj_%s, &buf_%s, %s) != 0) {'%(indent, arg.name, arg.name, 'PyBUF_WRITABLE' if arg.output else '0')
-      src += ' printf("Error retrieving Python buffers\\n"); return NULL; '
-      src += '}\n'
-    src += '%s//Number of elements to process\n'%(indent)
-    src += '%sint N = buf_%s.len / sizeof(%s);\n'%(indent, args[0].name, type)
-    src += '%s//Check length for all buffers\n'%(indent)
+      src += 'if(PyObject_GetBuffer(obj_%s, &buf_%s, %s) != 0) {'%(arg.name, arg.name, 'PyBUF_WRITABLE' if arg.output else '0')
+      src.indent()
+      src += 'printf("Error retrieving Python buffer (%s)\\n");'%(arg.name)
+      src += 'return NULL;'
+      src.unindent()
+      src += '}'
+    src += '//Number of elements to process'
+    src += 'int N = buf_%s.len / sizeof(%s);'%(args[0].name, type)
+    src += '//Check length for all buffers'
     for arg in args:
-      src += '%sif(buf_%s.len / sizeof(%s) != N) {'%(indent, arg.name, type)
-      src += ' printf("Python buffer sizes don\'t match\\n"); return NULL; '
-      src += '}\n'
-    src += '%s//Extract input arrays from buffers\n'%(indent)
-    src += '%sKernelArgs args;\n'%(indent)
+      src += 'if(buf_%s.len / sizeof(%s) != N) {'%(arg.name, type)
+      src.indent()
+      src += 'printf("Python buffer sizes don\'t match (%s)\\n");'%(arg.name)
+      src += 'return NULL;'
+      src.unindent()
+      src += '}'
+    src += '//Extract input arrays from buffers'
+    src += 'KernelArgs args;'
     for arg in args:
-      src += '%sargs.%s = (%s*)buf_%s.buf;\n'%(indent, arg.name, type, arg.name)
-    src += '%sargs.N = N;\n'%(indent)
-    src += '%s//Run the kernel\n'%(indent)
-    src += '%sbool result = run(&args);\n'%(indent)
-    src += '%s//Release buffers\n'%(indent)
+      src += 'args.%s = (%s*)buf_%s.buf;'%(arg.name, type, arg.name)
+    src += 'args.N = N;'
+    src += '//Run the kernel'
+    src += 'bool result = run(&args);'
+    src += '//Release buffers'
     for arg in args:
-      src += '%sPyBuffer_Release(&buf_%s);\n'%(indent, arg.name)
-    src += '%s//Return the result\n'%(indent)
-    src += '%sif(result) { Py_RETURN_TRUE; } else { printf("Kernel reported failure\\n"); Py_RETURN_FALSE; }\n'%(indent)
-    src += '}\n'
-    src += '\n'
+      src += 'PyBuffer_Release(&buf_%s);'%(arg.name)
+    src += '//Return the result'
+    src += 'if(result) { Py_RETURN_TRUE; } else { printf("Kernel reported failure\\n"); Py_RETURN_FALSE; }'
+    src.unindent()
+    src += '}'
+    src += ''
     #Module manifest
-    src += '//Module manifest\n'
-    src += 'static PyMethodDef module_methods[] = {\n'
-    src += '%s{\n'%(indent)
-    src += '%s%s//Export name, visible within Python\n'%(indent, indent)
-    src += '%s%s"%s",\n'%(indent, indent, k.name)
-    src += '%s%s//Pointer to local implementation\n'%(indent, indent)
-    src += '%s%s%s_run,\n'%(indent, indent, k.name)
-    src += '%s%s//Accept normal (not keyword) arguments\n'%(indent, indent)
-    src += '%s%sMETH_VARARGS,\n'%(indent, indent)
-    src += '%s%s//Function documentation\n'%(indent, indent)
-    src += '%s%s"%s"\n'%(indent, indent, '\\n'.join(k.docstring.splitlines()))
-    src += '%s},{NULL, NULL, 0, NULL} //End of manifest entries\n'%(indent)
-    src += '};\n'
-    src += '\n'
+    src += '//Module manifest'
+    src += 'static PyMethodDef module_methods[] = {'
+    src.indent()
+    src += '{'
+    src.indent()
+    src += '//Export name, visible within Python'
+    src += '"%s",'%(k.name)
+    src += '//Pointer to local implementation'
+    src += '%s_run,'%(k.name)
+    src += '//Accept normal (not keyword) arguments'
+    src += 'METH_VARARGS,'
+    src += '//Function documentation'
+    src += '"%s"'%('\n'.join(k.docstring.splitlines()))
+    src.unindent()
+    src += '},{NULL, NULL, 0, NULL} //End of manifest entries'
+    src.unindent()
+    src += '};'
+    src += ''
     #Module definition
-    src += '//Module definition\n'
-    src += 'static struct PyModuleDef module = {\n'
-    src += '%sPyModuleDef_HEAD_INIT,\n'%(indent)
-    src += '%s//Module name\n'%(indent)
-    src += '%s"%s",\n'%(indent, module_name)
-    src += '%s//Module documentation\n'%(indent)
-    src += '%s"VecPy module for %s.",\n'%(indent, k.name)
-    src += '%s//Other module info\n'%(indent)
-    src += '%s-1, module_methods, NULL, NULL, NULL, NULL\n'%(indent)
-    src += '};\n'
-    src += '\n'
+    src += '//Module definition'
+    src += 'static struct PyModuleDef module = {'
+    src.indent()
+    src += 'PyModuleDef_HEAD_INIT,'
+    src += '//Module name'
+    src += '"%s",'%(module_name)
+    src += '//Module documentation'
+    src += '"VecPy module for %s.",'%(k.name)
+    src += '//Other module info'
+    src += '-1, module_methods, NULL, NULL, NULL, NULL'
+    src.unindent()
+    src += '};'
+    src += ''
     #Module initializer
-    src += '//Module initializer\n'
-    src += 'PyMODINIT_FUNC PyInit_%s() { return PyModule_Create(&module); }\n'%(module_name)
-    src += '\n'
-    #Print code to stdout
-    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
+    src += '//Module initializer'
+    src += 'PyMODINIT_FUNC PyInit_%s() { return PyModule_Create(&module); }'%(module_name)
+    src += ''
     #Save code to file
     file_name = Compiler.get_python_file(k)
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
 
   #Generates the Java API
   def compile_java(k):
-    indent = get_indent()
-    src = ''
     type = k.get_type()
     args = k.get_arguments()
-    src += '//Java entry point\n'
+    src = Formatter()
+    src.section('VecPy generated entry point: Java')
     #Includes
-    src += '//Includes\n'
-    src += '#include <jni.h>\n'
-    src += '\n';
+    src += '//Includes'
+    src += '#include <jni.h>'
+    src += ''
     #Wrapper for the core function
-    src += '//Wrapper for the core function\n'
+    src += '//Wrapper for the core function'
     arg_str = ', '.join('jobject buf_%s'%(arg.name) for arg in args)
-    src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s_%s(JNIEnv* env, jclass cls, %s) {\n'%('VecPy', k.name, arg_str)
+    src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s_%s(JNIEnv* env, jclass cls, %s) {'%('VecPy', k.name, arg_str)
+    src.indent()
     buffer_type = 'FloatBuffer'
-    src += '%s//Make sure the buffers are directly allocated\n'%(indent)
-    src += '%sjclass %s = env->FindClass("java/nio/%s");\n'%(indent, buffer_type, buffer_type)
-    src += '%sjmethodID isDirect = env->GetMethodID(%s, "isDirect", "()Z");\n'%(indent, buffer_type)
+    src += '//Make sure the buffers are directly allocated'
+    src += 'jclass %s = env->FindClass("java/nio/%s");'%(buffer_type, buffer_type)
+    src += 'jmethodID isDirect = env->GetMethodID(%s, "isDirect", "()Z");'%(buffer_type)
     for arg in args:
-      src += '%sif(!env->CallBooleanMethod(buf_%s, isDirect)) {'%(indent, arg.name)
-      src += ' printf("Buffer not direct (%s)\\n"); return false; '%(arg.name)
-      src += '}\n'
-    src += '%s//Number of elements to process\n'%(indent)
-    src += '%sjlong N = env->GetDirectBufferCapacity(buf_%s);\n'%(indent, args[0].name)
-    src += '%sif(N == -1) { printf("JVM doesn\'t support direct buffers\\n"); return false; }\n'%(indent)
-    src += '%s//Check length for all buffers\n'%(indent)
+      src += 'if(!env->CallBooleanMethod(buf_%s, isDirect)) {'%(arg.name)
+      src.indent()
+      src += 'printf("Buffer not direct (%s)\\n");'%(arg.name)
+      src += 'return false;'
+      src.unindent()
+      src += '}'
+    src += '//Number of elements to process'
+    src += 'jlong N = env->GetDirectBufferCapacity(buf_%s);'%(args[0].name)
+    src += 'if(N == -1) {'
+    src.indent()
+    src += 'printf("JVM doesn\'t support direct buffers\\n");'
+    src += 'return false;'
+    src.unindent()
+    src += '}'
+    src += '//Check length for all buffers'
     for arg in args:
-      src += '%sif(env->GetDirectBufferCapacity(buf_%s) != N) { '%(indent, arg.name)
-      src += 'printf("Java buffer sizes don\'t match\\n"); return false; '
-      src += '}\n'
-    src += '%s//Extract input arrays from buffers\n'%(indent)
-    src += '%sKernelArgs args;\n'%(indent)
+      src += 'if(env->GetDirectBufferCapacity(buf_%s) != N) { '%(arg.name)
+      src.indent()
+      src += 'printf("Java buffer sizes don\'t match (%s)\\n");'%(arg.name)
+      src += 'return false;'
+      src.unindent()
+      src += '}'
+    src += '//Extract input arrays from buffers'
+    src += 'KernelArgs args;'
     for arg in args:
-      src += '%sargs.%s = (%s*)env->GetDirectBufferAddress(buf_%s);\n'%(indent, arg.name, type, arg.name)
-    src += '%sargs.N = N;\n'%(indent)
+      src += 'args.%s = (%s*)env->GetDirectBufferAddress(buf_%s);'%(arg.name, type, arg.name)
+    src += 'args.N = N;'
     for arg in args:
-      src += '%sif(args.%s == NULL) { printf("Error retrieving Java buffers\\n"); return false; }\n'%(indent, arg.name)
-    src += '%s//Run the kernel\n'%(indent)
-    src += '%sreturn run(&args);\n'%(indent)
-    src += '}\n'
-    src += '\n'
-    #Print code to stdout
-    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
+      src += 'if(args.%s == NULL) {'%(arg.name)
+      src.indent()
+      src += 'printf("Error retrieving Java buffer (%s)\\n");'%(arg.name)
+      src += 'return false;'
+      src.unindent()
+      src += '}'
+    src += '//Run the kernel'
+    src += 'return run(&args);'
+    src.unindent()
+    src += '}'
+    src += ''
     #Save code to file
     file_name = Compiler.get_java_file(k)
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
 
   #Generates the kernel
   def compile_kernel(k, arch):
+    src = Formatter()
+    src.section('VecPy generated kernel: %s'%(k.name))
+    #The KernelArgs struct
+    src += '//Kernel arguments'
+    src += 'struct KernelArgs {'
+    src.indent()
+    for arg in k.get_arguments():
+      src += '%s* %s;'%(k.get_type(), arg.name)
+    src += 'int N;'
+    src.unindent()
+    src += '};'
+    src += ''
     #Generate an architecture-specific kernel
-    if Architecture.is_generic(arch):
-      src = Compiler_Generic.compile_kernel(k, arch)
-    elif Architecture.is_intel(arch):
-      src = Compiler_Intel.compile_kernel(k, arch)
-    else:
+    src += Compiler_Generic.compile_kernel(k, arch)
+    if Architecture.is_intel(arch):
+      src += Compiler_Intel.compile_kernel(k, arch)
+    elif not Architecture.is_generic(arch):
       raise Exception('Target architecture not implemented (%s)'%(arch['name']))
-    #Print code to stdout
-    #print('/*%s*/\n%s/*%s*/\n'%('*' * 80, src, '*' * 80))
     #Save code to file
     file_name = Compiler.get_kernel_file(k)
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
 
   #Compiles the module
   def build(k, build_flags):
-    indent = get_indent()
-    src = ''
+    src = Formatter()
     #Generate the build script
-    src += 'NAME=VecPy_%s.so\n'%(k.name)
-    src += 'rm -f $NAME\n'
-    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s\n'%(' '.join(build_flags), Compiler.get_core_file(k))
-    src += 'nm $NAME | grep " T "\n'
+    src += 'NAME=VecPy_%s.so'%(k.name)
+    src += 'rm -f $NAME'
+    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
+    src += 'nm $NAME | grep " T "'
     #Save code to file
     file_name = 'build.sh'
     with open(file_name, 'w') as file:
-      file.write(src)
+      file.write(src.get_code())
     #print('Saved to file: %s'%(file_name))
     #Run the build script
     subprocess.call(['chmod', '+x', file_name])
     subprocess.check_call(['./' + file_name], shell=True)
 
   #Generates all files and compiles the module
-  def compile(k, arch, bindings=(Binding.all,)):
+  def compile(k, arch, bindings=(Binding.all,), num_cores=None):
     #Sanity checks
     if arch is None:
-      raise Exception('No architecture unspecified')
+      raise Exception('No architecture specified')
     if bindings is None or len(bindings) == 0:
       raise Exception('No language bindings specified')
+    #Auto-detect number of cores
+    if num_cores is None or num_cores < 1:
+      try:
+        import multiprocessing
+        num_cores = multiprocessing.cpu_count()
+      except(ImportError, NotImplementedError):
+        num_cores = 1
+      print('Detected %s core(s)'%(num_cores))
     #Generate the kernel
     Compiler.compile_kernel(k, arch)
     #Generate API for each language
@@ -325,6 +404,6 @@ class Compiler:
       build_flags.append('-I/usr/java/latest/include/')
       build_flags.append('-I/usr/java/latest/include/linux/')
     #Generate the core
-    Compiler.compile_core(k, include_files)
+    Compiler.compile_core(k, include_files, num_cores)
     #Compile the module
     Compiler.build(k, build_flags)

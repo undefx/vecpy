@@ -30,5 +30,33 @@ class Binding:
   java   = 3
 
 #Indent amount
-def get_indent():
-  return ' ' * 4
+def get_indent(level):
+  return ' ' * (4 * level)
+
+#Source code formatter
+class Formatter:
+  def __init__(self):
+    self.level = 0
+    self.code = ''
+  def section(self, title):
+    width = 78
+    left = (width - len(title)) // 2
+    right = width - len(title) - left
+    self.append('/' + ('*' * width) + '*')
+    self.append('*' + (' ' * left) + title + (' ' * right) + '*')
+    self.append('*' + ('*' * width) + '/')
+  def __iadd__(self, other):
+    self.append(other)
+    return self
+  def append(self, code, end='\n'):
+    self.code += get_indent(self.level) + code + end
+  def indent(self):
+    self.level += 1
+  def unindent(self):
+    self.level -= 1
+    if self.level < 0:
+      raise Exception('Negative indent')
+  def get_code(self):
+    if self.level != 0:
+      raise Exception('Still indented')
+    return self.code
