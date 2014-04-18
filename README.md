@@ -78,6 +78,6 @@ VecPy relies on multi-threading and SIMD execution to achieve the fastest possib
 Requirements
 =====
   - Python 3.x (to run VecPy)
-  - Linux (to compile the native module)
+  - Linux (to compile the native library)
   - Optional: Python 3.x headers if compiling as a Python module
   - Optional: JDK if compiling for use with Java via JNI
