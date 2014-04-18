@@ -1,12 +1,12 @@
 VecPy
 =====
 
-VecPy builds native libraries from arbitrary kernel functions written in Python. Native libraries leverage multi-threading and SIMD instructions on modern x86 processors to execute the kernel as efficiently as possible. Multiple language bindings allow the vectorized kernel to be called from Python, C++, and Java ‐ all from a single, shared library.
+VecPy builds native libraries from arbitrary kernel functions written in Python. Native libraries leverage multi-threading and SIMD instructions on modern x86 processors to execute the kernel as efficiently as possible. Multiple language bindings allow the vectorized kernel to be called from Python, C++, and Java - all from a single, shared library.
 
 
 Hello, world!
 =====
-One of the primary design goals of VecPy is *simplicity*. In just a few lines of code, VecPy translates and compiles a Python function into an efficient, data-parallel native library. The generated libary can then be loaded as a Python module, allowing the optimzed function to be used as a drop-in replacement for the original Python function. The following program illustrates how simple it can be to use VecPy to significantly improve Python program performance.
+One of the primary design goals of VecPy is *simplicity*. In just a few lines of code, VecPy translates and compiles a Python function into an efficient, data-parallel native library. The generated library can then be loaded as a Python module, allowing the optimized function to be used as a drop-in replacement for the original Python function. The following program illustrates how simple it can be to use VecPy to significantly improve Python program performance.
 ```python
 #Import VecPy and other modules
 from parser import Parser
@@ -43,7 +43,7 @@ print(spheres, icosahedrons)
 
 Features and Functionality
 =====
-Other deisgn goals of VecPy include *utility*, *flexibility*, and *efficiency*.
+Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 
 VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. The following Python operators, functions, and constants are currently supported:
 
