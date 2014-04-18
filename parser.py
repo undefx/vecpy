@@ -43,10 +43,12 @@ class Parser:
     return var
 
   #Adds a literal to the kernel if it hasn't already been defined
-  def add_literal(self, value):
+  def add_literal(self, value, suffix=None):
     var = self.kernel.get_literal(value)
     if var is None:
       var = self.kernel.add_variable(kernel.Variable(None, False, False, value))
+      if suffix is not None:
+        var.name += '_' + suffix
     return var
 
   #todo: debugging
@@ -67,6 +69,8 @@ class Parser:
       op = kernel.Operator.multiply
     elif isinstance(node.op, ast.Div):
       op = kernel.Operator.divide
+    elif isinstance(node.op, ast.Mod):
+      op = kernel.Operator.mod
     elif isinstance(node.op, ast.Pow):
       op = kernel.Operator.pow
     else:
@@ -86,7 +90,14 @@ class Parser:
       if operand.value is not None:
         return self.add_literal(-operand.value)
       else:
-        raise Exception('todo: negate an expression')
+        #Emulate negation by subtracting from zero (faster than multiplying by negative one)
+        var = self.add_variable(None)
+        zero = self.add_literal(0, 'ZERO')
+        operation = kernel.BinaryOperation(zero, kernel.Operator.subtract, operand)
+        assignment = kernel.Assignment(var, operation)
+        statement = kernel.Statement(assignment)
+        self.kernel.add(statement)
+        return var
     else:
       raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
 
@@ -102,18 +113,48 @@ class Parser:
       func = expr.func.id
     else:
       raise Exception('Unexpected function call (%s)'%(expr.func.__class__))
+    #Parse the argument list
     args = []
     for arg in expr.args:
       args.append(self.expression(arg))
-    if mod == 'math':
-      if func in kernel.Math.binary_functions and len(args) == 2:
-        operation = kernel.BinaryOperation(args[0], func, args[1])
-      elif func in kernel.Math.unary_functions and len(args) == 1:
-        operation = kernel.UnaryOperation(func, args[0])
-      else:
-        raise Exception('Call not supported or invalid arguments (%s.%s)'%(mod, func))
+    #Find the module that contains the function
+    if mod == '__main__':
+      #Calls to intrinsic functions
+      cls = kernel.Intrinsic
+    elif mod == 'math':
+      #Calls to math functions
+      cls = kernel.Math
     else:
+      #Other calls aren't supported
       raise Exception('Call not supported (module %s)'%(mod))
+    #Build the call
+    if func in cls.binary_functions and len(args) == 2:
+      operation = kernel.BinaryOperation(args[0], func, args[1])
+    elif func in cls.unary_functions and len(args) == 1:
+      operation = kernel.UnaryOperation(func, args[0])
+    #Emulated functions
+    elif mod == 'math' and func == 'degrees' and len(args) == 1:
+      r2d = self.add_literal(180.0 / math.pi, 'R2D')
+      operation = kernel.BinaryOperation(args[0], '*', r2d)
+    elif mod == 'math' and func == 'radians' and len(args) == 1:
+      d2r = self.add_literal(math.pi / 180.0, 'D2R')
+      operation = kernel.BinaryOperation(args[0], '*', d2r)
+    elif mod == 'math' and func == 'log' and len(args) == 2:
+      var1 = self.add_variable(None)
+      op1 = kernel.UnaryOperation(func, args[0])
+      asst1 = kernel.Assignment(var1, op1)
+      stmt1 = kernel.Statement(asst1)
+      self.kernel.add(stmt1)
+      var2 = self.add_variable(None)
+      op2 = kernel.UnaryOperation(func, args[1])
+      asst2 = kernel.Assignment(var2, op2)
+      stmt2 = kernel.Statement(asst2)
+      self.kernel.add(stmt2)
+      operation = kernel.BinaryOperation(var1, '/', var2)
+    #Unknown function
+    else:
+      raise Exception('Call not supported or invalid arguments (%s.%s)'%(mod, func))
+    #Make the assignment and return the result
     assignment = kernel.Assignment(var, operation)
     statement = kernel.Statement(assignment)
     self.kernel.add(statement)
@@ -125,11 +166,9 @@ class Parser:
     name = attr.attr
     if mod == 'math':
       if name == 'pi':
-        var = self.add_literal(math.pi)
-        var.name += '_PI'
+        var = self.add_literal(math.pi, 'PI')
       elif name == 'e':
-        var = self.add_literal(math.e)
-        var.name += '_E'
+        var = self.add_literal(math.e, 'E')
       else:
         raise Exception('Contsant not supported (%s.%s)'%(mod, name))
     else:

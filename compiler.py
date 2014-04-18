@@ -30,7 +30,13 @@ class Compiler:
     return 'vecpy_%s_core.cpp'%(k.name)
 
   #Generates the core file
-  def compile_core(k, include_files, num_cores):
+  def compile_core(k, options, include_files):
+    if Architecture.is_generic(options.arch):
+      suffix = 'scalar'
+    elif Architecture.is_intel(options.arch):
+      suffix = 'vector'
+    else:
+      raise Exception('Target architecture not implemented (%s)'%(options.arch['name']))
     src = Formatter()
     src.section('VecPy generated core')
     #Includes
@@ -43,7 +49,7 @@ class Compiler:
     src += '//Utility functions'
     src += 'static void* threadStart(void* v) {'
     src.indent()
-    src += '%s_vector((KernelArgs*)v);'%(k.name)
+    src += '%s_%s((KernelArgs*)v);'%(k.name, suffix)
     src += 'return NULL;'
     src.unindent()
     src += '}'
@@ -54,12 +60,6 @@ class Compiler:
     src += '}'
     src += 'static bool checkArgs(KernelArgs* args) {'
     src.indent()
-    src += 'if(args->N %% %d != 0) {'%(4)
-    src.indent()
-    src += 'printf("Input size not a multiple of %d (%%d)\\n", args->N);'%(4)
-    src += 'return false;'
-    src.unindent()
-    src += '}'
     for arg in k.get_arguments():
       src += 'if(!isAligned(args->%s)) {'%(arg.name)
       src.indent()
@@ -81,11 +81,15 @@ class Compiler:
     src += 'return false;'
     src.unindent()
     src += '}'
-    src += 'const unsigned int numThreads = %d;'%(num_cores)
-    src += 'unsigned int num = args->N / numThreads;'
-    src += 'unsigned int offset = 0;'
+    src += '//Compile-time constants'
+    src += 'const unsigned int vectorSize = %d;'%(options.arch['size'])
+    src += 'const unsigned int numThreads = %d;'%(options.threads)
+    src += '//Division of labor'
+    src += 'const unsigned int vectorsPerThread = args->N / (vectorSize * numThreads);'
+    src += 'const unsigned int elementsPerThread = vectorsPerThread * vectorSize;'
     src += '//Execute on multiple threads'
-    src += 'if(num > 0) {'
+    src += 'unsigned int offset = 0;'
+    src += 'if(elementsPerThread > 0) {'
     src.indent()
     src += 'pthread_t* threads = new pthread_t[numThreads];'
     src += 'KernelArgs* threadArgs = new KernelArgs[numThreads];'
@@ -93,8 +97,8 @@ class Compiler:
     src.indent()
     for arg in k.get_arguments():
       src += 'threadArgs[t].%s = &args->%s[offset];'%(arg.name, arg.name)
-    src += 'threadArgs[t].N = num;'
-    src += 'offset += num;'
+    src += 'threadArgs[t].N = elementsPerThread;'
+    src += 'offset += elementsPerThread;'
     src += 'pthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);'
     src.unindent()
     src += '}'
@@ -107,6 +111,7 @@ class Compiler:
     src += 'delete [] threadArgs;'
     src.unindent()
     src += '}'
+    src += 'printf("Vector: %dx%dx%d=%d | Scalar: %d\\n", vectorsPerThread, vectorSize, numThreads, offset, args->N - offset);'
     src += '//Handle any remaining elements'
     src += 'if(offset < args->N) {'
     src.indent()
@@ -133,13 +138,13 @@ class Compiler:
     #print('Saved to file: %s'%(file_name))
 
   #Generates the C++ API
-  def compile_cpp(k):
+  def compile_cpp(k, options):
     src = Formatter()
     src.section('VecPy generated entry point: C++')
     #Build the argument string
     arg_str = ''
     for arg in k.get_arguments():
-      arg_str += '%s* %s, '%(k.get_type(), arg.name)
+      arg_str += '%s* %s, '%(options.type, arg.name)
     #Wrapper for the core function
     src += '//Wrapper for the core function'
     src += 'extern "C" bool %s(%sint N) {'%(k.name, arg_str)
@@ -159,8 +164,8 @@ class Compiler:
     #print('Saved to file: %s'%(file_name))
 
   #Generates the Python API
-  def compile_python(k):
-    type = k.get_type()
+  def compile_python(k, options):
+    type = options.type
     module_name = 'VecPy_' + k.name
     args = k.get_arguments()
     src = Formatter()
@@ -263,8 +268,8 @@ class Compiler:
     #print('Saved to file: %s'%(file_name))
 
   #Generates the Java API
-  def compile_java(k):
-    type = k.get_type()
+  def compile_java(k, options):
+    type = options.type
     args = k.get_arguments()
     src = Formatter()
     src.section('VecPy generated entry point: Java')
@@ -328,7 +333,7 @@ class Compiler:
     #print('Saved to file: %s'%(file_name))
 
   #Generates the kernel
-  def compile_kernel(k, arch):
+  def compile_kernel(k, options):
     src = Formatter()
     src.section('VecPy generated kernel: %s'%(k.name))
     #The KernelArgs struct
@@ -336,17 +341,17 @@ class Compiler:
     src += 'struct KernelArgs {'
     src.indent()
     for arg in k.get_arguments():
-      src += '%s* %s;'%(k.get_type(), arg.name)
-    src += 'int N;'
+      src += '%s* %s;'%(options.type, arg.name)
+    src += 'unsigned int N;'
     src.unindent()
     src += '};'
     src += ''
     #Generate an architecture-specific kernel
-    src += Compiler_Generic.compile_kernel(k, arch)
-    if Architecture.is_intel(arch):
-      src += Compiler_Intel.compile_kernel(k, arch)
-    elif not Architecture.is_generic(arch):
-      raise Exception('Target architecture not implemented (%s)'%(arch['name']))
+    src += Compiler_Generic.compile_kernel(k, options)
+    if Architecture.is_intel(options.arch):
+      src += Compiler_Intel.compile_kernel(k, options)
+    elif not Architecture.is_generic(options.arch):
+      raise Exception('Target architecture not implemented (%s)'%(options.arch['name']))
     #Save code to file
     file_name = Compiler.get_kernel_file(k)
     with open(file_name, 'w') as file:
@@ -371,39 +376,43 @@ class Compiler:
     subprocess.check_call(['./' + file_name], shell=True)
 
   #Generates all files and compiles the module
-  def compile(k, arch, bindings=(Binding.all,), num_cores=None):
+  def compile(kernel, options):
     #Sanity checks
-    if arch is None:
+    if options.arch is None:
       raise Exception('No architecture specified')
-    if bindings is None or len(bindings) == 0:
+    if options.bindings is None or len(options.bindings) == 0:
       raise Exception('No language bindings specified')
     #Auto-detect number of cores
-    if num_cores is None or num_cores < 1:
+    if options.threads is None or options.threads < 1:
       try:
         import multiprocessing
-        num_cores = multiprocessing.cpu_count()
+        options.threads = multiprocessing.cpu_count()
       except(ImportError, NotImplementedError):
-        num_cores = 1
-      print('Detected %s core(s)'%(num_cores))
+        options.threads = 1
+      print('Detected %s core(s)'%(options.threads))
+    else:
+      print('Using %s thread(s)'%(options.threads))
+    #Show options
+    options.show()
     #Generate the kernel
-    Compiler.compile_kernel(k, arch)
+    Compiler.compile_kernel(kernel, options)
     #Generate API for each language
     include_files = []
-    build_flags = [arch['flag']]
-    if Binding.all in bindings or Binding.cpp in bindings:
-      Compiler.compile_cpp(k)
-      include_files.append(Compiler.get_cpp_file(k))
-    if Binding.all in bindings or Binding.python in bindings:
-      Compiler.compile_python(k)
-      include_files.append(Compiler.get_python_file(k))
+    build_flags = [options.arch['flag']]
+    if Binding.all in options.bindings or Binding.cpp in options.bindings:
+      Compiler.compile_cpp(kernel, options)
+      include_files.append(Compiler.get_cpp_file(kernel))
+    if Binding.all in options.bindings or Binding.python in options.bindings:
+      Compiler.compile_python(kernel, options)
+      include_files.append(Compiler.get_python_file(kernel))
       build_flags.append('-lpython3.3m')
       build_flags.append('-I/usr/include/python3.3m/')
-    if Binding.all in bindings or Binding.java in bindings:
-      Compiler.compile_java(k)
-      include_files.append(Compiler.get_java_file(k))
+    if Binding.all in options.bindings or Binding.java in options.bindings:
+      Compiler.compile_java(kernel, options)
+      include_files.append(Compiler.get_java_file(kernel))
       build_flags.append('-I/usr/java/latest/include/')
       build_flags.append('-I/usr/java/latest/include/linux/')
     #Generate the core
-    Compiler.compile_core(k, include_files, num_cores)
+    Compiler.compile_core(kernel, options, include_files)
     #Compile the module
-    Compiler.build(k, build_flags)
+    Compiler.build(kernel, build_flags)

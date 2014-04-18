@@ -3,12 +3,19 @@ from compiler_constants import *
 
 class Compiler_Generic:
 
-  def compile_kernel(k, arch):
+  def compile_kernel(k, options):
     src = Formatter()
-    src.section('Target Architecture: Generic')
+    src.section('Target Architecture: %s (%s)'%(options.arch['name'], options.type))
+    if options.type == DataType.float:
+      literal_format = '%.7ff'
+    elif options.type == DataType.uint32:
+      literal_format = '0x%08x'
+    else:
+      raise Exception('Type not supported (%s)'%(options.type))
     #Includes
     src += '//Includes'
     src += '#include <math.h>'
+    src += '#include <algorithm>'
     src += ''
     #Function header
     src += '//Kernel function: %s'%(k.name)
@@ -18,15 +25,16 @@ class Compiler_Generic:
     #Literals
     src += '//Literals'
     for var in k.get_literals():
-      src += 'const %s %s = %f;'%(k.get_type(), var.name, var.value)
+      value = literal_format%(var.value)
+      src += 'const %s %s = %s;'%(options.type, var.name, value)
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
-    src += '%s %s;'%(k.get_type(), ', '.join([var.name for var in k.get_variables()]))
+    src += '%s %s;'%(options.type, ', '.join([var.name for var in k.get_variables()]))
     src += ''
     #Begin input loop
     src += '//Loop over input'
-    src += 'for(int index = 0; index < args->N; index++) {'
+    src += 'for(unsigned int index = 0; index < args->N; ++index) {'
     src += ''
     #Function body
     src.indent()
@@ -55,9 +63,18 @@ class Compiler_Generic:
             right = stmt.expr.right.name
             if op in ('+', '-', '*', '/'):
               src += '%s = %s %s %s;'%(var, left, op, right)
+            elif op == '%':
+              if options.type == DataType.float:
+                src += '%s = fmod(%s, %s);'%(var, left, right)
+              elif options.type == DataType.uint32:
+                src += '%s = %s %s %s;'%(var, left, op, right)
+              else:
+                raise Exception('mod not implemented for %s'%(options.type))
             elif op == '**':
               src += '%s = pow(%s, %s);'%(var, left, right)
-            elif op in Math.binary_functions:
+            elif op in Intrinsic.binary_functions + Math.binary_functions:
+              if op in ('max', 'min'):
+                op = 'std::' + op
               src += '%s = %s(%s, %s);'%(var, op, left, right)
             else:
               raise Exception('Unknown operator (%s)'%(op))
@@ -66,9 +83,13 @@ class Compiler_Generic:
             var = stmt.var.name
             input = stmt.expr.var.name
             if op in ('',):
-              #todo - built-in unary operations
+              #todo - built-in unary operators
               pass
-            elif op in Math.unary_functions:
+            elif op in Intrinsic.unary_functions + Math.unary_functions:
+              if op == 'gamma':
+                op = 'tgamma'
+              elif op == 'abs' and options.type == DataType.float:
+                op = 'fabs'
               src += '%s = %s(%s);'%(var, op, input)
             else:
               raise Exception('Unknown unary operator/function (%s)'%(op))

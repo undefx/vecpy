@@ -37,57 +37,68 @@ class Operator:
   subtract = '-'
   multiply = '*'
   divide = '/'
+  mod = '%'
   pow = '**'
 
-#Built-in Python functions from the math module
-class Math:
+#Built-in Python functions
+class Intrinsic:
   #Functions taking two arguments
   binary_functions = (
-    'hypot',
-    #'copysign',
-    #'fmod',
-    #'ldexp',
-    #'log',
+    'max',
+    'min',
     'pow',
-    'atan2',
   )
   #Functions taking one argument
   unary_functions = (
+    'abs',
+  )
+
+#Functions from Python's math module
+class Math:
+  #Functions taking two arguments
+  binary_functions = (
+    'atan2',
+    'copysign',
+    'fmod',
+    'hypot',
+    #'ldexp',
+    'pow',
+  )
+  #Functions taking one argument
+  unary_functions = (
+    'acos',
+    'acosh',
+    'asin',
+    'asinh',
+    'atan',
+    'atanh',
     'ceil',
+    'cos',
+    'cosh',
+    'erf',
+    'erfc',
+    'exp',
+    'expm1',
     'fabs',
     #'factorial',
     'floor',
     #'frexp',
-    #'fsum',
+    'gamma',
     #'isfinite',
     #'isinf',
     #'isnan',
+    'lgamma',
+    'log',
+    'log10',
+    'log1p',
+    'log2',
     #'modf',
-    #'trunc',
-    'exp',
-    #'expm1',
-    #'log1p',
-    #'log2',
-    #'log10',
-    'sqrt',
-    'acos',
-    'asin',
-    'atan',
-    'cos',
     'sin',
-    'tan',
-    #'degrees',
-    #'radians',
-    'acosh',
-    'asinh',
-    'atanh',
-    'cosh',
     'sinh',
+    'sqrt',
+    'tan',
     'tanh',
-    #'erf',
-    #'erfc',
-    #'gamma',
-    #'lgamma',
+    'trunc',
   )
 
 #Represents an operation on two variables
@@ -213,7 +224,3 @@ class Kernel:
   def get_variables(self):
     vars = sorted(list(self.variables.values()), key=lambda var: var.index)
     return [var for var in vars if var.value is None]
-
-  #todo: Returns the C data type used by this kernel
-  def get_type(self):
-    return 'float'
