@@ -7,10 +7,13 @@ The Kernel is a set of operations to be performed on a set of data.
 class Variable:
   #A unique variable identifier
   index = 0
-  def __init__(self, name, is_arg, is_temp, value):
+  def __init__(self, name, is_arg, is_temp, is_mask, value):
     if name is None:
       if value is None:
-        prefix = 'var'
+        if is_mask:
+          prefix = 'mask'
+        else:
+          prefix = 'var'
       else:
         prefix = 'lit'
       name = '%s%03d'%(prefix, Variable.index)
@@ -20,6 +23,8 @@ class Variable:
     self.is_arg = is_arg
     #Whether or not the variable was inferred
     self.is_temp = is_temp
+    #Whether or not this variable is a bit mask
+    self.is_mask = is_mask
     #The value of this literal
     self.value = value
     #A unique identifier for this variable
@@ -39,6 +44,16 @@ class Operator:
   divide = '/'
   mod = '%'
   pow = '**'
+  eq = '=='
+  ne = '!='
+  gt = '>'
+  ge = '>='
+  lt = '<'
+  le = '<='
+  bit_and = '&'
+  bit_andnot = '&~'
+  bit_or = '|'
+  bit_xor = '^'
 
 #Built-in Python functions
 class Intrinsic:
@@ -51,6 +66,7 @@ class Intrinsic:
   #Functions taking one argument
   unary_functions = (
     'abs',
+    'round',
   )
 
 #Functions from Python's math module
@@ -104,11 +120,11 @@ class Math:
 #Represents an operation on two variables
 class BinaryOperation:
   def __init__(self, left, op, right):
-    #The left side variable
+    #The left-side variable
     self.left = left
     #The operation or function
     self.op = op
-    #The right side variable
+    #The right-side variable
     self.right = right
 
 #Represents an operation on one variable
@@ -119,9 +135,38 @@ class UnaryOperation:
     #The variable
     self.var = var
 
+#Represents a comparison of two variables
+class ComparisonOperation:
+  def __init__(self, left, op, right):
+    #The left-side variable
+    self.left = left
+    #The operation
+    self.op = op
+    #The right-side variable
+    self.right = right
+
+#Represents a single statement
+class Statement:
+  pass
+
+#A list of statements
+class Block:
+  def __init__(self, mask):
+    #Initialize an empty list of statements
+    self.code = []
+    #The mask used inside of this block
+    self.mask = mask
+  #Appends a statement to the code block
+  def add(self, stmt):
+    #Sanity checks
+    if not isinstance(stmt, Statement):
+      raise Exception('Can\'t add that (%s) to the code block'%(stmt.__class__))
+    #Append the statement to the code block
+    self.code.append(stmt)
+
 #Represents an assignment of some expression to a variable
-class Assignment:
-  def __init__(self, var, expr):
+class Assignment(Statement):
+  def __init__(self, var, expr, vector_only=False, mask=None):
     #Sanity check
     if var is None:
       raise Exception('var is None')
@@ -129,28 +174,24 @@ class Assignment:
     self.var = var
     #The expression to be evaluated
     self.expr = expr
+    #Whether this is only used in the vector kernel
+    self.vector_only = vector_only
+    #The vector mask determining which lanes are updated
+    self.mask = mask
+
+#Represents an if-else branch
+class IfElse(Statement):
+  def __init__(self, if_mask, else_mask):
+    #The code to execute if the condition is true
+    self.if_block = Block(if_mask)
+    #The code to execute if the condition is false (optional)
+    self.else_block = Block(else_mask)
 
 #Represents a comment to include in the module's source code
-class Comment:
+class Comment(Statement):
   def __init__(self, comment):
     #The comment string
     self.comment = comment
-
-#Represents a single statement
-class Statement:
-  def __init__(self, stmt):
-    #The statement
-    self.stmt = stmt
-
-##A list of statements
-#class Block:
-#  def __init__(self):
-#    #Initialize an empty list of statements
-#    self.stmts = []
-#  #Appends a statement to this code block
-#  def add_statement(self, stmt):
-#    #Add the statement to the end of the list
-#    self.stmts.append(stmt)
 
 #Represents an entire kernel function
 class Kernel:
@@ -163,10 +204,13 @@ class Kernel:
     self.arguments = {}
     #A table of literal variables
     self.literals = {}
-    #A list of all individual statements
-    self.code = []
     #The default docstring
     self.docstring = 'An undocumented (but probably awesome) kernel function.'
+    #Literal masks
+    self.mask_true = Variable('MASK_TRUE', False, False, True, None)
+    self.mask_false = Variable('MASK_FALSE', False, False, True, None)
+    #The kernel's code block
+    self.block = Block(self.mask_true)
 
   #Returns the variable with the given name
   def get_variable(self, name):
@@ -194,18 +238,6 @@ class Kernel:
       self.literals[var.value] = var
     #Return the variable
     return var
-
-  #Appends a statement to the kernel
-  def add(self, stmt):
-    #Sanity checks
-    if isinstance(stmt, Statement):
-      pass
-    elif isinstance(stmt, Comment):
-      pass
-    else:
-      raise Exception('can\'t add that (%s)'%(stmt.__class__))
-    #Append the statement to the kernel
-    self.code.append(stmt)
 
   #Replaces the default docstring
   def set_docstring(self, docstring):

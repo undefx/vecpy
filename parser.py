@@ -33,34 +33,39 @@ class Parser:
 
   #Adds an argument to the kernel
   def add_argument(self, name):
-    return self.kernel.add_variable(kernel.Variable(name, True, False, None))
+    return self.kernel.add_variable(kernel.Variable(name, True, False, False, None))
 
   #Adds a variable to the kernel if it hasn't already been defined
-  def add_variable(self, name):
+  def add_variable(self, name, is_mask=False):
     var = self.kernel.get_variable(name)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(name, False, name is None, None))
+      var = self.kernel.add_variable(kernel.Variable(name, False, name is None, is_mask, None))
     return var
 
   #Adds a literal to the kernel if it hasn't already been defined
   def add_literal(self, value, suffix=None):
     var = self.kernel.get_literal(value)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(None, False, False, value))
+      var = self.kernel.add_variable(kernel.Variable(None, False, False, False, value))
       if suffix is not None:
         var.name += '_' + suffix
     return var
+
+  #Adds this (Python source) line as a (C++ source) comment
+  def add_comment(self, block, src):
+    comment = kernel.Comment(self.source.split('\n')[src.lineno - 1].strip())
+    block.add(comment)
 
   #todo: debugging
   def _dump(x, label=''):
     print('\n', '*' * 10, label, '*' * 10, '\n', ast.dump(x, annotate_fields=True, include_attributes=True), '\n')
 
   #Parses a binary operation (AST BinOp)
-  def binop(self, node, var):
+  def binop(self, block, node, var):
     if var == None:
       var = self.add_variable(None)
-    left = self.expression(node.left)
-    right = self.expression(node.right)
+    left = self.expression(block, node.left)
+    right = self.expression(block, node.right)
     if isinstance(node.op, ast.Add):
       op = kernel.Operator.add
     elif isinstance(node.op, ast.Sub):
@@ -77,13 +82,12 @@ class Parser:
       raise Exception('Unexpected BinOp (%s)'%(node.op.__class__))
     operation = kernel.BinaryOperation(left, op, right)
     assignment = kernel.Assignment(var, operation)
-    statement = kernel.Statement(assignment)
-    self.kernel.add(statement)
+    block.add(assignment)
     return var
 
   #Parses a unary uperation (AST UnaryOp)
-  def unaryop(self, node):
-    operand = self.expression(node.operand)
+  def unaryop(self, block, node):
+    operand = self.expression(block, node.operand)
     if isinstance(node.op, ast.UAdd):
       return operand
     if isinstance(node.op, ast.USub):
@@ -95,14 +99,30 @@ class Parser:
         zero = self.add_literal(0, 'ZERO')
         operation = kernel.BinaryOperation(zero, kernel.Operator.subtract, operand)
         assignment = kernel.Assignment(var, operation)
-        statement = kernel.Statement(assignment)
-        self.kernel.add(statement)
+        block.add(assignment)
         return var
     else:
       raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
 
+  #Parses a comparison operator (AST CmpOp)
+  def cmpop(self, op):
+    if isinstance(op, ast.Eq):
+      return kernel.Operator.eq
+    elif isinstance(op, ast.NotEq):
+      return kernel.Operator.ne
+    elif isinstance(op, ast.Lt):
+      return kernel.Operator.lt
+    elif isinstance(op, ast.LtE):
+      return kernel.Operator.le
+    elif isinstance(op, ast.Gt):
+      return kernel.Operator.gt
+    elif isinstance(op, ast.GtE):
+      return kernel.Operator.ge
+    else:
+      raise Exception('Unexpected CmpOp (%s)'%(op.__class__))
+  
   #Parses a function call (AST Call)
-  def call(self, expr, var):
+  def call(self, block, expr, var):
     if var == None:
       var = self.add_variable(None)
     if isinstance(expr.func, ast.Attribute):
@@ -116,7 +136,7 @@ class Parser:
     #Parse the argument list
     args = []
     for arg in expr.args:
-      args.append(self.expression(arg))
+      args.append(self.expression(block, arg))
     #Find the module that contains the function
     if mod == '__main__':
       #Calls to intrinsic functions
@@ -143,25 +163,22 @@ class Parser:
       var1 = self.add_variable(None)
       op1 = kernel.UnaryOperation(func, args[0])
       asst1 = kernel.Assignment(var1, op1)
-      stmt1 = kernel.Statement(asst1)
-      self.kernel.add(stmt1)
+      block.add(asst1)
       var2 = self.add_variable(None)
       op2 = kernel.UnaryOperation(func, args[1])
       asst2 = kernel.Assignment(var2, op2)
-      stmt2 = kernel.Statement(asst2)
-      self.kernel.add(stmt2)
+      block.add(asst2)
       operation = kernel.BinaryOperation(var1, '/', var2)
     #Unknown function
     else:
       raise Exception('Call not supported or invalid arguments (%s.%s)'%(mod, func))
     #Make the assignment and return the result
     assignment = kernel.Assignment(var, operation)
-    statement = kernel.Statement(assignment)
-    self.kernel.add(statement)
+    block.add(assignment)
     return var
 
   #Parses a named attribute (AST Attribute)
-  def attribute(self, attr):
+  def attribute(self, block, attr):
     mod = attr.value.id
     name = attr.attr
     if mod == 'math':
@@ -176,7 +193,7 @@ class Parser:
     return var
 
   #Parses an expression (AST Expr)
-  def expression(self, expr, var=None):
+  def expression(self, block, expr, var=None):
     if isinstance(expr, ast.Num):
       var = self.add_literal(expr.n)
     elif isinstance(expr, ast.Name):
@@ -186,64 +203,109 @@ class Parser:
       if var.is_arg:
         var.input = True
     elif isinstance(expr, ast.BinOp):
-      var = self.binop(expr, var)
+      var = self.binop(block, expr, var)
     elif isinstance(expr, ast.UnaryOp):
-      var = self.unaryop(expr)
+      var = self.unaryop(block, expr)
     elif isinstance(expr, ast.Call):
-      var = self.call(expr, var)
+      var = self.call(block, expr, var)
     elif isinstance(expr, ast.Attribute):
-      var = self.attribute(expr)
+      var = self.attribute(block, expr)
     else:
+      Parser._dump(expr, 'Unexpected Expression')
       raise Exception('Unexpected Expression (%s)'%(expr.__class__))
     return var
 
+  #Parses a comparison expression (AST Compare)
+  def compare(self, block, cmp):
+    if len(cmp.comparators) != 1:
+      raise Exception('Comparison requires exactly 1 right-side element')
+    if len(cmp.ops) != 1:
+      raise Exception('Comparison requires exactly 1 operator')
+    #Parse the left and right expressions
+    left = self.expression(block, cmp.left)
+    right = self.expression(block, cmp.comparators[0])
+    #Parse the operator
+    op = self.cmpop(cmp.ops[0])
+    #Create a temporary variable to store the result of the comparison
+    var = self.add_variable(None, is_mask=True)
+    comparison = kernel.ComparisonOperation(left, op, right)
+    assignment = kernel.Assignment(var, comparison)
+    block.add(assignment)
+    return var
+
+  #Generates a new block mask
+  def get_mask(self, block, mask, op):
+    if block.mask is None:
+      return mask
+    else:
+      var = self.add_variable(None, is_mask=True)
+      operation = kernel.BinaryOperation(mask, op, block.mask)
+      assignment = kernel.Assignment(var, operation, vector_only=True)
+      block.add(assignment)
+      return var
+
+  #Parses an if(-else) statement (AST If)
+  def if_(self, block, src):
+    if isinstance(src.test, ast.Compare):
+      #Parse the condition
+      mask = self.compare(block, src.test)
+      if_mask = self.get_mask(block, mask, kernel.Operator.bit_and)
+      if len(src.orelse) != 0:
+        else_mask = self.get_mask(block, mask, kernel.Operator.bit_andnot)
+      else:
+        else_mask = None
+      ifelse = kernel.IfElse(if_mask, else_mask)
+      #Recursively parse the body (and the else body if there is one)
+      for stmt in src.body:
+        self.statement(ifelse.if_block, stmt)
+      for stmt in src.orelse:
+        self.statement(ifelse.else_block, stmt)
+      block.add(ifelse)
+    else:
+      raise Exception('Unexpected if test (%s)'%(src.test.__class__))
+
   #Parses a single assignment
-  def assign_single(self, src, dst, multi=False):
+  def assign_single(self, block, src, dst, multi=False):
     #Make or get the destination variable
     var = self.add_variable(dst.id)
     #Set the output flag is the variable is a kernel argument
     if var.is_arg:
       var.output = True
     #Parse the expression and get the intermediate variable
-    expr = self.expression(src, var if not multi else None)
+    #expr = self.expression(block, src, var if not multi else None) #Skips intermediate storage variable
+    expr = self.expression(block, src, None) #Generates an intermediate storage variable
     #Don't generate a self assignment
     if var != expr:
       #Create a temporary variable if this is a multi-assignment
       if multi and not expr.is_temp:
         temp = self.add_variable(None)
         assignment = kernel.Assignment(temp, expr)
-        statement = kernel.Statement(assignment)
-        self.kernel.add(statement)
+        block.add(assignment)
         expr = temp
       #The final assignment will be added to the kernel later
-      assignment = kernel.Assignment(var, expr)
-      statement = kernel.Statement(assignment)
-      return statement
+      return kernel.Assignment(var, expr, vector_only=True, mask=block.mask)
     else:
       return None
 
   #Parses (possibly multiple) assignments (AST Assign)
-  def assign(self, stmt):
-    #Add this (python source) line as a (c++ kernel) comment
-    comment = kernel.Comment(self.source.split('\n')[stmt.lineno - 1].strip())
-    self.kernel.add(comment)
+  def assign(self, block, stmt):
     #Evaluate the assignment(s)
     value = stmt.value
     for i in range(len(stmt.targets)):
       target = stmt.targets[i]
       if isinstance(target, ast.Name):
-        result = self.assign_single(value, target)
+        result = self.assign_single(block, value, target)
         if result is not None:
-          self.kernel.add(result)
+          block.add(result)
       elif isinstance(target, ast.Tuple):
         #Save intermediate results
         results = []
         #Evaluate individual assignments
         for (t, v) in zip(target.elts, stmt.value.elts):
-          results.append(self.assign_single(v, t, multi=True))
+          results.append(self.assign_single(block, v, t, multi=True))
         #Execute final assignments after intermediate calculations
         for result in results:
-          self.kernel.add(result)
+          block.add(result)
       else:
         raise Exception('Unexpected Assignment (%s)'%(target.__class__))
 
@@ -258,7 +320,9 @@ class Parser:
       raise Exception('Bad return type (%s)'%('not an argument'))
 
   #Parses (possibly multiple) returns (AST Return)
-  def return_(self, ret):
+  def return_(self, block, ret):
+    if block != self.kernel.block:
+      raise Exception('Can\'t return from nested code block')
     if ret.value is None:
       raise Exception('Bad return type (%s)'%('must return something'))
     elif isinstance(ret.value, ast.Tuple):
@@ -268,7 +332,9 @@ class Parser:
       self.return_single(ret.value)
 
   #Parses the docstring of a function
-  def docstring_(self, stmt):
+  def docstring_(self, block, stmt):
+    if block != self.kernel.block:
+      raise Exception('Can\'t define docstring in nested code block')
     if self.docstring is not None:
       raise Exception('Docstring already defined')
     if not isinstance(stmt.value, ast.Str):
@@ -277,16 +343,21 @@ class Parser:
     self.kernel.set_docstring(self.docstring)
 
   #Parses statements (AST Stmt)
-  def statement(self, stmt):
+  def statement(self, block, stmt):
+    #Add a comment
+    self.add_comment(block, stmt)
+    #Parse the statement
     if isinstance(stmt, ast.Assign):
-      self.assign(stmt)
+      self.assign(block, stmt)
     elif isinstance(stmt, ast.Return):
-      self.return_(stmt)
+      self.return_(block, stmt)
     elif isinstance(stmt, ast.Expr):
-      self.docstring_(stmt)
+      self.docstring_(block, stmt)
+    elif isinstance(stmt, ast.If):
+      self.if_(block, stmt)
     else:
-      Parser._dump(stmt, 'unsupported statement')
-      raise Exception('unsupported statement')
+      Parser._dump(stmt, 'Unexpected Statement')
+      raise Exception('Unexpected Statement (%s)'%(stmt.__class__))
 
   #===========================================================
   # Public interface
@@ -344,7 +415,7 @@ class Parser:
 
       #The body!
       for stmt in node.body:
-        parser.statement(stmt)
+        parser.statement(parser.kernel.block, stmt)
 
       #The source code has been parsed, return the abstract kernel
       return parser.kernel

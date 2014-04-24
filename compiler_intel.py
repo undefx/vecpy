@@ -4,15 +4,14 @@ from compiler_constants import *
 class Compiler_Intel:
 
   def compile_kernel(k, options):
-    scratch = ('tempA', 'tempB')
     src = Formatter()
     src.section('Target Architecture: %s (%s)'%(options.arch['name'], options.type))
     size = options.arch['size']
     if options.type == DataType.float:
-      trans = Compiler_Intel.SSE4_Float(src, scratch, size)
+      trans = Compiler_Intel.SSE4_Float(src, size)
       literal_format = '%.7ff'
     elif options.type == DataType.uint32:
-      trans = Compiler_Intel.SSE4_UInt32(src, scratch, size)
+      trans = Compiler_Intel.SSE4_UInt32(src, size)
       literal_format = '0x%08x'
     else:
       raise Exception('Type not supported (%s)'%(options.type))
@@ -28,17 +27,14 @@ class Compiler_Intel:
     src.indent()
     #Literals
     src += '//Literals'
+    src += 'const __m128 MASK_FALSE = _mm_setzero_ps();'
+    src += 'const __m128 MASK_TRUE = _mm_cmpeq_ps(MASK_FALSE, MASK_FALSE);'
     for var in k.get_literals():
       trans.set('const %s %s'%(vecType, var.name), literal_format%(var.value))
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
     src += '%s %s;'%(vecType, ', '.join([var.name for var in k.get_variables()]))
-    src += ''
-    #Scratch
-    src += '//Scratch'
-    for var in scratch:
-      src += '%s %s[%d];'%(options.type, var, size)
     src += ''
     #Begin input loop
     src += '//Loop over input'
@@ -54,41 +50,9 @@ class Compiler_Intel:
     #Core kernel logic
     src += '//Begin kernel logic'
     src += '{'
-    src.indent()
-    for stmt in k.code:
-      if isinstance(stmt, Comment):
-        src += ''
-        src += '//>>> %s'%(stmt.comment)
-      elif isinstance(stmt, Statement):
-        stmt = stmt.stmt
-        if isinstance(stmt, Assignment):
-          if isinstance(stmt.expr, Variable):
-            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
-          elif isinstance(stmt.expr, BinaryOperation):
-            op = stmt.expr.op
-            var = stmt.var.name
-            left = stmt.expr.left.name
-            right = stmt.expr.right.name
-            if op in trans.operations:
-              trans.operations[op](var, left, right)
-            else:
-              raise Exception('Unknown binary operator/function (%s)'%(op))
-          elif isinstance(stmt.expr, UnaryOperation):
-            op = stmt.expr.op
-            var = stmt.var.name
-            input = stmt.expr.var.name
-            if op in trans.operations:
-              trans.operations[op](var, input)
-            else:
-              raise Exception('Unknown unary operator/function (%s)'%(op))
-          else:
-            raise Exception('bad assignment')
-        else:
-          raise Exception('statement not an assignment (%s)'%(stmt.__class__))
-      else:
-        raise Exception('can\'t handle that (%s)'%(stmt.__class__))
     src += ''
-    src.unindent()
+    Compiler_Intel.compile_block(k.block, src, trans)
+    src += ''
     src += '}'
     src += '//End kernel logic'
     src += ''
@@ -107,23 +71,90 @@ class Compiler_Intel:
     src += ''
     return src.get_code()
 
+  def compile_block(block, src, trans):
+    src.indent()
+    for stmt in block.code:
+      if isinstance(stmt, Comment):
+        src += '//>>> %s'%(stmt.comment)
+      elif isinstance(stmt, Assignment):
+        if isinstance(stmt.expr, Variable):
+          if stmt.vector_only:
+            mask = stmt.mask.name
+            output = stmt.var.name
+            input = stmt.expr.name
+            src += '%s = _mm_or_ps(_mm_and_ps(%s, %s), _mm_andnot_ps(%s, %s));'%(output, mask, input, mask, output)
+          else:
+            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
+        elif isinstance(stmt.expr, BinaryOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          left = stmt.expr.left.name
+          right = stmt.expr.right.name
+          if op in trans.operations:
+            trans.operations[op](var, left, right)
+          else:
+            raise Exception('Unknown binary operator/function (%s)'%(op))
+        elif isinstance(stmt.expr, UnaryOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          input = stmt.expr.var.name
+          if op in trans.operations:
+            trans.operations[op](var, input)
+          else:
+            raise Exception('Unknown unary operator/function (%s)'%(op))
+        elif isinstance(stmt.expr, ComparisonOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          left = stmt.expr.left.name
+          right = stmt.expr.right.name
+          if op in trans.operations:
+            trans.operations[op](var, left, right)
+          else:
+            raise Exception('Unknown comparison operator (%s)'%(op))
+        else:
+          raise Exception('Bad assignment')
+      elif isinstance(stmt, IfElse):
+        src += '{'
+        Compiler_Intel.compile_block(stmt.if_block, src, trans)
+        if len(stmt.else_block.code) != 0:
+          src += '}'
+          src += '//(else)'
+          src += '{'
+          Compiler_Intel.compile_block(stmt.else_block, src, trans)
+        src += '}'
+      else:
+        raise Exception('Can\'t handle that (%s)'%(stmt.__class__))
+    src.unindent()
+
   class Translator:
-    def __init__(self, src, scratch, size):
+    def __init__(self, src, size):
       self.src = src
-      self.scratch = scratch
       self.size = size
       self.operations = {
-        #Python operators
-        '+': self.add,
-        '-': self.sub,
-        '*': self.mul,
-        '/': self.div,
-        '%': self.mod,
-        '**': self.pow,
+        #Python arithmetic operators
+        Operator.add: self.add,
+        Operator.subtract: self.sub,
+        Operator.multiply: self.mul,
+        Operator.divide: self.div,
+        Operator.mod: self.mod,
+        Operator.pow: self.pow,
+        #Python comparison operators
+        Operator.eq: self.eq,
+        Operator.ne: self.ne,
+        Operator.ge: self.ge,
+        Operator.gt: self.gt,
+        Operator.le: self.le,
+        Operator.lt: self.lt,
+        #Python bit operators
+        Operator.bit_and: self.bit_and,
+        Operator.bit_andnot: self.bit_andnot,
+        Operator.bit_or: self.bit_or,
+        Operator.bit_xor: self.bit_xor,
         #Python intrinsics
         'abs': self.abs,
         'max': self.max,
         'min': self.min,
+        'round': self.round,
         #Math functions (binary)
         'atan2': self.atan2,
         'copysign': self.copysign,
@@ -177,19 +208,12 @@ class Compiler_Intel:
       self.src += '%s = %s(%s, %s);'%(args[0], func, args[1], args[2])
     def scalar_1_1(self, func, args):
       output, input = args
-      s = self.scratch
-      self.store(s[0], input)
       for i in range(self.size):
-        self.src += '%s[%d] = %s(%s[%d]);'%(s[0], i, func, s[0], i)
-      self.load(output, s[0])
+        self.src += '%s[%d] = %s(%s[%d]);'%(output, i, func, input, i)
     def scalar_1_2(self, func, args):
       output, left, right = args
-      s = self.scratch
-      self.store(s[0], left)
-      self.store(s[1], right)
       for i in range(self.size):
-        self.src += '%s[%d] = %s(%s[%d], %s[%d]);'%(s[0], i, func, s[0], i, s[1], i)
-      self.load(output, s[0])
+        self.src += '%s[%d] = %s(%s[%d], %s[%d]);'%(output, i, func, left, i, right, i)
     def error(self):
       raise Exception('Not implemented')
     #Abstract stubs
@@ -200,7 +224,7 @@ class Compiler_Intel:
       self.error()
     def store(self, *args):
       self.error()
-    #Operators
+    #Python arithmetic operators
     def add(self, *args):
       self.error()
     def sub(self, *args):
@@ -213,12 +237,36 @@ class Compiler_Intel:
       self.error()
     def pow(self, *args):
       self.error()
+    #Python comparison operators
+    def eq(self, *args):
+      self.error()
+    def ne(self, *args):
+      self.error()
+    def ge(self, *args):
+      self.error()
+    def gt(self, *args):
+      self.error()
+    def le(self, *args):
+      self.error()
+    def lt(self, *args):
+      self.error()
+    #Python bit operators
+    def bit_and(self, *args):
+      self.error()
+    def bit_andnot(self, *args):
+      self.error()
+    def bit_or(self, *args):
+      self.error()
+    def bit_xor(self, *args):
+      self.error()
     #Python intrinsics
     def abs(self, *args):
       self.error()
     def max(self, *args):
       self.error()
     def min(self, *args):
+      self.error()
+    def round(self, *args):
       self.error()
     #Math functions (binary)
     def atan2(self, *args):
@@ -300,8 +348,8 @@ class Compiler_Intel:
       self.error()
 
   class SSE4_Float(Translator):
-    def __init__(self, src, scratch, size):
-      Compiler_Intel.Translator.__init__(self, src, scratch, size)
+    def __init__(self, src, size):
+      Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128'
     #Misc
     def set(self, *args):
@@ -310,7 +358,7 @@ class Compiler_Intel:
       self.vector_1_1('_mm_load_ps', args)
     def store(self, *args):
       self.vector_0_2('_mm_store_ps', args)
-    #Operators
+    #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_ps', args)
     def sub(self, *args):
@@ -323,6 +371,28 @@ class Compiler_Intel:
       self.scalar_1_2('fmod', args)
     def pow(self, *args):
       self.scalar_1_2('pow', args)
+    #Python comparison operators
+    def eq(self, *args):
+      self.vector_1_2('_mm_cmpeq_ps', args)
+    def ne(self, *args):
+      self.vector_1_2('_mm_cmpneq_ps', args)
+    def ge(self, *args):
+      self.vector_1_2('_mm_cmpge_ps', args)
+    def gt(self, *args):
+      self.vector_1_2('_mm_cmpgt_ps', args)
+    def le(self, *args):
+      self.vector_1_2('_mm_cmple_ps', args)
+    def lt(self, *args):
+      self.vector_1_2('_mm_cmplt_ps', args)
+    #Python bit operators
+    def bit_and(self, *args):
+      self.vector_1_2('_mm_and_ps', args)
+    def bit_andnot(self, *args):
+      self.vector_1_2('_mm_andnot_ps', args)
+    def bit_or(self, *args):
+      self.vector_1_2('_mm_or_ps', args)
+    def bit_xor(self, *args):
+      self.vector_1_2('_mm_xor_ps', args)
     #Python intrinsics
     def abs(self, *args):
       self.scalar_1_1('fabs', args)
@@ -330,6 +400,8 @@ class Compiler_Intel:
       self.vector_1_2('_mm_max_ps', args)
     def min(self, *args):
       self.vector_1_2('_mm_min_ps', args)
+    def round(self, *args):
+      self.scalar_1_1('round', args)
     #Math functions (binary)
     def atan2(self, *args):
       self.scalar_1_2('atan2', args)
@@ -339,8 +411,6 @@ class Compiler_Intel:
       self.scalar_1_2('fmod', args)
     def hypot(self, *args):
       self.scalar_1_2('hypot', args)
-    #def ldexp(self, *args):
-    #  self.error()
     #Math functions (unary)
     def acos(self, *args):
       self.scalar_1_1('acos', args)
@@ -370,20 +440,10 @@ class Compiler_Intel:
       self.scalar_1_1('expm1', args)
     def fabs(self, *args):
       self.scalar_1_1('fabs', args)
-    #def factorial(self, *args):
-    #  self.scalar_1_1('factorial', args)
     def floor(self, *args):
       self.scalar_1_1('floor', args)
-    #def frexp(self, *args):
-    #  self.scalar_1_1('frexp', args)
     def gamma(self, *args):
       self.scalar_1_1('tgamma', args)
-    #def isfinite(self, *args):
-    #  self.scalar_1_1('isfinite', args)
-    #def isinf(self, *args):
-    #  self.scalar_1_1('isinf', args)
-    #def isnan(self, *args):
-    #  self.scalar_1_1('isnan', args)
     def lgamma(self, *args):
       self.scalar_1_1('lgamma', args)
     def log(self, *args):
@@ -394,8 +454,6 @@ class Compiler_Intel:
       self.scalar_1_1('log1p', args)
     def log2(self, *args):
       self.scalar_1_1('log2', args)
-    #def modf(self, *args):
-    #  self.scalar_1_1('modf', args)
     def sin(self, *args):
       self.scalar_1_1('sin', args)
     def sinh(self, *args):
@@ -410,8 +468,8 @@ class Compiler_Intel:
       self.scalar_1_1('trunc', args)
 
   class SSE4_UInt32(Translator):
-    def __init__(self, src, scratch, size):
-      Compiler_Intel.Translator.__init__(self, src, scratch, size)
+    def __init__(self, src, size):
+      Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128i'
     #Misc
     def set(self, *args):
@@ -422,85 +480,10 @@ class Compiler_Intel:
     def store(self, *args):
       args = ('(%s*)(%s)'%(self.type, args[0]), args[1])
       self.vector_0_2('_mm_store_si128', args)
-    #Operators
+    #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_epi32', args)
     def sub(self, *args):
       self.vector_1_2('_mm_sub_epi32', args)
     def mul(self, *args):
       self.vector_1_2('_mm_mullo_epi32', args)
-    #def div(self, *args):
-    #  self.vector_1_2('_mm_div_ps', args)
-    #def mod(self, *args):
-    #  self.vector_1_2('?', args)
-    #def pow(self, *args):
-    #  self.scalar_1_2('pow', args)
-    ##Python intrinsics
-    #def abs(self, *args):
-    #  self.error()
-    #def max(self, *args):
-    #  self.error()
-    #def min(self, *args):
-    #  self.error()
-    ##Math functions (binary)
-    #def atan2(self, *args):
-    #  self.scalar_1_2('atan2', args)
-    #def copysign(self, *args):
-    #  self.scalar_1_2('copysign', args)
-    #def fmod(self, *args):
-    #  self.scalar_1_2('fmod', args)
-    #def hypot(self, *args):
-    #  self.scalar_1_2('hypot', args)
-    #def ldexp(self, *args):
-    #  self.error()
-    ##Math functions (unary)
-    #def acos(self, *args):
-    #  self.scalar_1_1('acos', args)
-    #def acosh(self, *args):
-    #  self.scalar_1_1('acosh', args)
-    #def asin(self, *args):
-    #  self.scalar_1_1('asin', args)
-    #def asinh(self, *args):
-    #  self.scalar_1_1('asinh', args)
-    #def atan(self, *args):
-    #  self.scalar_1_1('atan', args)
-    #def atanh(self, *args):
-    #  self.scalar_1_1('atanh', args)
-    #def ceil(self, *args):
-    #  self.scalar_1_1('ceil', args)
-    #def cos(self, *args):
-    #  self.scalar_1_1('cos', args)
-    #def cosh(self, *args):
-    #  self.scalar_1_1('cosh', args)
-    ##'erf',
-    ##'erfc',
-    #def exp(self, *args):
-    #  self.scalar_1_1('exp', args)
-    ##'expm1',
-    #def fabs(self, *args):
-    #  self.scalar_1_1('fabs', args)
-    ##'factorial',
-    #def floor(self, *args):
-    #  self.scalar_1_1('floor', args)
-    ##'frexp',
-    ##'gamma',
-    ##'isfinite',
-    ##'isinf',
-    ##'isnan',
-    ##'lgamma',
-    ##'log',
-    ##'log10',
-    ##'log1p',
-    ##'log2',
-    ##'modf',
-    #def sin(self, *args):
-    #  self.scalar_1_1('sin', args)
-    #def sinh(self, *args):
-    #  self.scalar_1_1('sinh', args)
-    #def sqrt(self, *args):
-    #  self.vector_1_1('_mm_sqrt_ps', args)
-    #def tan(self, *args):
-    #  self.scalar_1_1('tan', args)
-    #def tanh(self, *args):
-    #  self.scalar_1_1('tanh', args)
-    ##'trunc',

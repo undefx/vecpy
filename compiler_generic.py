@@ -29,8 +29,14 @@ class Compiler_Generic:
       src += 'const %s %s = %s;'%(options.type, var.name, value)
     src += ''
     #Temporary (stack) variables
-    src += '//Stack variables'
-    src += '%s %s;'%(options.type, ', '.join([var.name for var in k.get_variables()]))
+    vars = [var.name for var in k.get_variables() if not var.is_mask]
+    if len(vars) != 0:
+      src += '//Stack variables (numeric)'
+      src += '%s %s;'%(options.type, ', '.join(vars))
+    bools = [var.name for var in k.get_variables() if var.is_mask]
+    if len(bools) != 0:
+      src += '//Stack variables (boolean)'
+      src += '%s %s;'%('bool', ', '.join(bools))
     src += ''
     #Begin input loop
     src += '//Loop over input'
@@ -46,61 +52,9 @@ class Compiler_Generic:
     #Core kernel logic
     src += '//Begin kernel logic'
     src += '{'
-    src.indent()
-    for stmt in k.code:
-      if isinstance(stmt, Comment):
-        src += ''
-        src += '//>>> %s'%(stmt.comment)
-      elif isinstance(stmt, Statement):
-        stmt = stmt.stmt
-        if isinstance(stmt, Assignment):
-          if isinstance(stmt.expr, Variable):
-            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
-          elif isinstance(stmt.expr, BinaryOperation):
-            op = stmt.expr.op
-            var = stmt.var.name
-            left = stmt.expr.left.name
-            right = stmt.expr.right.name
-            if op in ('+', '-', '*', '/'):
-              src += '%s = %s %s %s;'%(var, left, op, right)
-            elif op == '%':
-              if options.type == DataType.float:
-                src += '%s = fmod(%s, %s);'%(var, left, right)
-              elif options.type == DataType.uint32:
-                src += '%s = %s %s %s;'%(var, left, op, right)
-              else:
-                raise Exception('mod not implemented for %s'%(options.type))
-            elif op == '**':
-              src += '%s = pow(%s, %s);'%(var, left, right)
-            elif op in Intrinsic.binary_functions + Math.binary_functions:
-              if op in ('max', 'min'):
-                op = 'std::' + op
-              src += '%s = %s(%s, %s);'%(var, op, left, right)
-            else:
-              raise Exception('Unknown operator (%s)'%(op))
-          elif isinstance(stmt.expr, UnaryOperation):
-            op = stmt.expr.op
-            var = stmt.var.name
-            input = stmt.expr.var.name
-            if op in ('',):
-              #todo - built-in unary operators
-              pass
-            elif op in Intrinsic.unary_functions + Math.unary_functions:
-              if op == 'gamma':
-                op = 'tgamma'
-              elif op == 'abs' and options.type == DataType.float:
-                op = 'fabs'
-              src += '%s = %s(%s);'%(var, op, input)
-            else:
-              raise Exception('Unknown unary operator/function (%s)'%(op))
-          else:
-            raise Exception('bad assignment')
-        else:
-          raise Exception('statement not an assignment (%s)'%(stmt.__class__))
-      else:
-        raise Exception('can\'t handle that (%s)'%(stmt.__class__))
     src += ''
-    src.unindent()
+    Compiler_Generic.compile_block(k.block, src)
+    src += ''
     src += '}'
     src += '//End kernel logic'
     src += ''
@@ -118,3 +72,79 @@ class Compiler_Generic:
     src += '//End of kernel function'
     src += ''
     return src.get_code()
+
+  def compile_block(block, src):
+    src.indent()
+    for stmt in block.code:
+      if isinstance(stmt, Comment):
+        src += '//>>> %s'%(stmt.comment)
+      elif isinstance(stmt, Assignment):
+        if isinstance(stmt.expr, Variable):
+          src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
+        elif stmt.vector_only:
+          #Don't generate vector masks
+          src += '%s = %s;'%(stmt.var.name, stmt.expr.left.name)
+        elif isinstance(stmt.expr, BinaryOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          left = stmt.expr.left.name
+          right = stmt.expr.right.name
+          if op in ('+', '-', '*', '/', '&', '&~', '|', '^'):
+            if op == '&~':
+              src += '%s = ~%s & %s;'%(var, left, right)
+            else:
+              src += '%s = %s %s %s;'%(var, left, op, right)
+          elif op == '%':
+            if options.type == DataType.float:
+              src += '%s = fmod(%s, %s);'%(var, left, right)
+            elif options.type == DataType.uint32:
+              src += '%s = %s %s %s;'%(var, left, op, right)
+            else:
+              raise Exception('mod not implemented for %s'%(options.type))
+          elif op == '**':
+            src += '%s = pow(%s, %s);'%(var, left, right)
+          elif op in Intrinsic.binary_functions + Math.binary_functions:
+            if op in ('max', 'min'):
+              op = 'std::' + op
+            src += '%s = %s(%s, %s);'%(var, op, left, right)
+          else:
+            raise Exception('Unknown operator (%s)'%(op))
+        elif isinstance(stmt.expr, UnaryOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          input = stmt.expr.var.name
+          if op in ('~',):
+            src += '%s = %s%s;'%(var, op, input)
+          elif op in Intrinsic.unary_functions + Math.unary_functions:
+            #Special cases
+            if op == 'gamma':
+              #http://stackoverflow.com/a/18116639
+              op = 'tgamma'
+            elif op == 'abs' and options.type == DataType.float:
+              #http://stackoverflow.com/a/13792680
+              op = 'fabs'
+            #Default case
+            src += '%s = %s(%s);'%(var, op, input)
+          else:
+            raise Exception('Unknown unary operator/function (%s)'%(op))
+        elif isinstance(stmt.expr, ComparisonOperation):
+          op = stmt.expr.op
+          var = stmt.var.name
+          left = stmt.expr.left.name
+          right = stmt.expr.right.name
+          if op in ('==', '!=', '>', '>=', '<', '<='):
+            src += '%s = %s %s %s;'%(var, left, op, right)
+          else:
+            raise Exception('Unknown operator (%s)'%(op))
+        else:
+          raise Exception('Bad assignment')
+      elif isinstance(stmt, IfElse):
+        src += 'if(%s) {'%(stmt.if_block.mask.name)
+        Compiler_Generic.compile_block(stmt.if_block, src)
+        if len(stmt.else_block.code) > 0:
+          src += '} else {'
+          Compiler_Generic.compile_block(stmt.else_block, src)
+        src += '}'
+      else:
+        raise Exception('Can\'t handle that (%s)'%(stmt.__class__))
+    src.unindent()
