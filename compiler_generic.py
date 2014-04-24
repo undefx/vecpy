@@ -145,6 +145,10 @@ class Compiler_Generic:
           src += '} else {'
           Compiler_Generic.compile_block(stmt.else_block, src)
         src += '}'
+      elif isinstance(stmt, WhileLoop):
+        src += 'while(%s) {'%(stmt.block.mask.name)
+        Compiler_Generic.compile_block(stmt.block, src)
+        src += '}'
       else:
         raise Exception('Can\'t handle that (%s)'%(stmt.__class__))
     src.unindent()

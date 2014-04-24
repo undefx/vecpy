@@ -187,6 +187,12 @@ class IfElse(Statement):
     #The code to execute if the condition is false (optional)
     self.else_block = Block(else_mask)
 
+#Represents a while loop
+class WhileLoop(Statement):
+  def __init__(self, mask):
+    #The code to execute while the condition is true
+    self.block = Block(mask)
+
 #Represents a comment to include in the module's source code
 class Comment(Statement):
   def __init__(self, comment):

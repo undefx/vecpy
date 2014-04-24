@@ -122,6 +122,12 @@ class Compiler_Intel:
           src += '{'
           Compiler_Intel.compile_block(stmt.else_block, src, trans)
         src += '}'
+      elif isinstance(stmt, WhileLoop):
+        name = stmt.block.mask.name
+        test = ' || '.join(['(%s[%d] != 0)'%(name, i) for i in range(trans.size)])
+        src += 'while(%s) {'%(test)
+        Compiler_Intel.compile_block(stmt.block, src, trans)
+        src += '}'
       else:
         raise Exception('Can\'t handle that (%s)'%(stmt.__class__))
     src.unindent()

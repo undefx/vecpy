@@ -216,7 +216,7 @@ class Parser:
     return var
 
   #Parses a comparison expression (AST Compare)
-  def compare(self, block, cmp):
+  def compare(self, block, cmp, var=None):
     if len(cmp.comparators) != 1:
       raise Exception('Comparison requires exactly 1 right-side element')
     if len(cmp.ops) != 1:
@@ -227,31 +227,51 @@ class Parser:
     #Parse the operator
     op = self.cmpop(cmp.ops[0])
     #Create a temporary variable to store the result of the comparison
-    var = self.add_variable(None, is_mask=True)
+    if var is None:
+      var = self.add_variable(None, is_mask=True)
     comparison = kernel.ComparisonOperation(left, op, right)
     assignment = kernel.Assignment(var, comparison)
     block.add(assignment)
     return var
 
   #Generates a new block mask
-  def get_mask(self, block, mask, op):
+  def get_mask(self, block, mask, op, var=None):
     if block.mask is None:
       return mask
     else:
-      var = self.add_variable(None, is_mask=True)
+      if var is None:
+        var = self.add_variable(None, is_mask=True)
       operation = kernel.BinaryOperation(mask, op, block.mask)
       assignment = kernel.Assignment(var, operation, vector_only=True)
       block.add(assignment)
       return var
 
+  #Parses a while loop (AST While)
+  def while_(self, block, src):
+    if isinstance(src.test, ast.Compare):
+      #Parse the condition
+      cond = self.compare(block, src.test)
+      mask = self.get_mask(block, cond, kernel.Operator.bit_and)
+      loop = kernel.WhileLoop(mask)
+      #Recursively parse the body
+      for stmt in src.body:
+        self.statement(loop.block, stmt)
+      #Re-evaluate the loop condition
+      self.add_comment(loop.block, src)
+      self.compare(loop.block, src.test, cond)
+      self.get_mask(loop.block, cond, kernel.Operator.bit_and, mask)
+      block.add(loop)
+    else:
+      raise Exception('Unexpected while test (%s)'%(src.test.__class__))
+
   #Parses an if(-else) statement (AST If)
   def if_(self, block, src):
     if isinstance(src.test, ast.Compare):
       #Parse the condition
-      mask = self.compare(block, src.test)
-      if_mask = self.get_mask(block, mask, kernel.Operator.bit_and)
+      cond = self.compare(block, src.test)
+      if_mask = self.get_mask(block, cond, kernel.Operator.bit_and)
       if len(src.orelse) != 0:
-        else_mask = self.get_mask(block, mask, kernel.Operator.bit_andnot)
+        else_mask = self.get_mask(block, cond, kernel.Operator.bit_andnot)
       else:
         else_mask = None
       ifelse = kernel.IfElse(if_mask, else_mask)
@@ -355,6 +375,8 @@ class Parser:
       self.docstring_(block, stmt)
     elif isinstance(stmt, ast.If):
       self.if_(block, stmt)
+    elif isinstance(stmt, ast.While):
+      self.while_(block, stmt)
     else:
       Parser._dump(stmt, 'Unexpected Statement')
       raise Exception('Unexpected Statement (%s)'%(stmt.__class__))
