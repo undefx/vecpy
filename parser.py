@@ -61,7 +61,7 @@ class Parser:
     print('\n', '*' * 10, label, '*' * 10, '\n', ast.dump(x, annotate_fields=True, include_attributes=True), '\n')
 
   #Parses a binary operation (AST BinOp)
-  def binop(self, block, node, var):
+  def binop(self, block, node, var=None):
     if var == None:
       var = self.add_variable(None)
     left = self.expression(block, node.left)
@@ -192,30 +192,7 @@ class Parser:
       raise Exception('Constant not supported (module %s)'%(mod))
     return var
 
-  #Parses an expression (AST Expr)
-  def expression(self, block, expr, var=None):
-    if isinstance(expr, ast.Num):
-      var = self.add_literal(expr.n)
-    elif isinstance(expr, ast.Name):
-      var = self.kernel.get_variable(expr.id)
-      if var is None:
-        raise Exception('Undefined Variable (%s)'%(expr.id))
-      if var.is_arg:
-        var.input = True
-    elif isinstance(expr, ast.BinOp):
-      var = self.binop(block, expr, var)
-    elif isinstance(expr, ast.UnaryOp):
-      var = self.unaryop(block, expr)
-    elif isinstance(expr, ast.Call):
-      var = self.call(block, expr, var)
-    elif isinstance(expr, ast.Attribute):
-      var = self.attribute(block, expr)
-    else:
-      Parser._dump(expr, 'Unexpected Expression')
-      raise Exception('Unexpected Expression (%s)'%(expr.__class__))
-    return var
-
-  #Parses a comparison expression (AST Compare)
+  #Parses a comparison (AST Compare)
   def compare(self, block, cmp, var=None):
     if len(cmp.comparators) != 1:
       raise Exception('Comparison requires exactly 1 right-side element')
@@ -234,6 +211,52 @@ class Parser:
     block.add(assignment)
     return var
 
+  #Parses a boolean operation (AST BoolOp)
+  def boolop(self, block, node, var=None):
+    if len(node.values) != 2:
+      raise Exception('BoolOp requires exactly 2 operands')
+    if var == None:
+      var = self.add_variable(None, is_mask=True)
+    left = self.expression(block, node.values[0])
+    right = self.expression(block, node.values[1])
+    if isinstance(node.op, ast.And):
+      op = kernel.Operator.bit_and
+    elif isinstance(node.op, ast.Or):
+      op = kernel.Operator.bit_or
+    else:
+      raise Exception('Unexpected BoolOp (%s)'%(node.op.__class__))
+    operation = kernel.BinaryOperation(left, op, right)
+    assignment = kernel.Assignment(var, operation)
+    block.add(assignment)
+    return var
+
+  #Parses an expression (AST Expr)
+  def expression(self, block, expr, var=None):
+    if isinstance(expr, ast.Num):
+      var = self.add_literal(expr.n)
+    elif isinstance(expr, ast.Name):
+      var = self.kernel.get_variable(expr.id)
+      if var is None:
+        raise Exception('Undefined Variable (%s)'%(expr.id))
+      if var.is_arg:
+        var.input = True
+    elif isinstance(expr, ast.BinOp):
+      var = self.binop(block, expr, var)
+    elif isinstance(expr, ast.UnaryOp):
+      var = self.unaryop(block, expr)
+    elif isinstance(expr, ast.Call):
+      var = self.call(block, expr, var)
+    elif isinstance(expr, ast.Attribute):
+      var = self.attribute(block, expr)
+    elif isinstance(expr, ast.Compare):
+      var = self.compare(block, expr)
+    elif isinstance(expr, ast.BoolOp):
+      var = self.boolop(block, expr)
+    else:
+      Parser._dump(expr, 'Unexpected Expression')
+      raise Exception('Unexpected Expression (%s)'%(expr.__class__))
+    return var
+
   #Generates a new block mask
   def get_mask(self, block, mask, op, var=None):
     if block.mask is None:
@@ -248,52 +271,54 @@ class Parser:
 
   #Parses a while loop (AST While)
   def while_(self, block, src):
-    if isinstance(src.test, ast.Compare):
-      #Parse the condition
-      cond = self.compare(block, src.test)
-      mask = self.get_mask(block, cond, kernel.Operator.bit_and)
-      loop = kernel.WhileLoop(mask)
-      #Recursively parse the body
-      for stmt in src.body:
-        self.statement(loop.block, stmt)
-      #Re-evaluate the loop condition
-      self.add_comment(loop.block, src)
-      self.compare(loop.block, src.test, cond)
-      self.get_mask(loop.block, cond, kernel.Operator.bit_and, mask)
-      block.add(loop)
-    else:
-      raise Exception('Unexpected while test (%s)'%(src.test.__class__))
+    #Mark the start and stop indices for the while condition so it can be checked later
+    start_index = len(block.code)
+    #Parse the condition
+    cond = self.expression(block, src.test)
+    #Generate the mask
+    mask = self.get_mask(block, cond, kernel.Operator.bit_and)
+    stop_index = len(block.code)
+    loop = kernel.WhileLoop(mask)
+    #Recursively parse the body
+    for stmt in src.body:
+      self.statement(loop.block, stmt)
+    #Duplicate the condition checking code
+    self.add_comment(loop.block, src)
+    loop.block.code += block.code[start_index:stop_index]
+    #Nest the loop in the current block
+    block.add(loop)
 
   #Parses an if(-else) statement (AST If)
   def if_(self, block, src):
-    if isinstance(src.test, ast.Compare):
-      #Parse the condition
-      cond = self.compare(block, src.test)
-      if_mask = self.get_mask(block, cond, kernel.Operator.bit_and)
-      if len(src.orelse) != 0:
-        else_mask = self.get_mask(block, cond, kernel.Operator.bit_andnot)
-      else:
-        else_mask = None
-      ifelse = kernel.IfElse(if_mask, else_mask)
-      #Recursively parse the body (and the else body if there is one)
-      for stmt in src.body:
-        self.statement(ifelse.if_block, stmt)
-      for stmt in src.orelse:
-        self.statement(ifelse.else_block, stmt)
-      block.add(ifelse)
+    #Parse the condition
+    cond = self.expression(block, src.test)
+    #Generate the masks
+    if_mask = self.get_mask(block, cond, kernel.Operator.bit_and)
+    if len(src.orelse) != 0:
+      else_mask = self.get_mask(block, cond, kernel.Operator.bit_andnot)
     else:
-      raise Exception('Unexpected if test (%s)'%(src.test.__class__))
+      else_mask = None
+    ifelse = kernel.IfElse(if_mask, else_mask)
+    #Recursively parse the body (and the else body if there is one)
+    for stmt in src.body:
+      self.statement(ifelse.if_block, stmt)
+    for stmt in src.orelse:
+      self.statement(ifelse.else_block, stmt)
+    #Nest the block(s) in the current block
+    block.add(ifelse)
 
   #Parses a single assignment
   def assign_single(self, block, src, dst, multi=False):
+    #Parse the expression and get the intermediate variable
+    #Skips intermediate storage variable (can't infer type)
+    #expr = self.expression(block, src, var if not multi else None)
+    #Generates an intermediate storage variable (can infer type)
+    expr = self.expression(block, src, None)
     #Make or get the destination variable
-    var = self.add_variable(dst.id)
+    var = self.add_variable(dst.id, is_mask=(expr.is_mask))
     #Set the output flag is the variable is a kernel argument
     if var.is_arg:
       var.output = True
-    #Parse the expression and get the intermediate variable
-    #expr = self.expression(block, src, var if not multi else None) #Skips intermediate storage variable
-    expr = self.expression(block, src, None) #Generates an intermediate storage variable
     #Don't generate a self assignment
     if var != expr:
       #Create a temporary variable if this is a multi-assignment
