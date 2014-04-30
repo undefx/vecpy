@@ -55,7 +55,7 @@ class Compiler:
     src += '}'
     src += 'static bool isAligned(void* data) {'
     src.indent()
-    src += 'return reinterpret_cast<unsigned long>(data) %% %dUL == 0UL;'%(16)
+    src += 'return reinterpret_cast<unsigned long>(data) %% %dUL == 0UL;'%(options.arch['size'] * 4)
     src.unindent()
     src += '}'
     src += 'static bool checkArgs(KernelArgs* args) {'

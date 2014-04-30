@@ -6,15 +6,29 @@ class Compiler_Intel:
   def compile_kernel(k, options):
     src = Formatter()
     src.section('Target Architecture: %s (%s)'%(options.arch['name'], options.type))
+    #Set some basic parameters
     size = options.arch['size']
     if options.type == DataType.float:
-      trans = Compiler_Intel.SSE4_Float(src, size)
       literal_format = '%.7ff'
     elif options.type == DataType.uint32:
-      trans = Compiler_Intel.SSE4_UInt32(src, size)
       literal_format = '0x%08x'
     else:
       raise Exception('Type not supported (%s)'%(options.type))
+    #Select an appropriate translator for the target architecture and data type
+    if options.arch == Architecture.sse4:
+      if options.type == DataType.float:
+        trans = Compiler_Intel.SSE4_Float(src, size)
+      elif options.type == DataType.uint32:
+        trans = Compiler_Intel.SSE4_UInt32(src, size)
+      else:
+        raise Exception('Type not supported (%s)'%(options.type))
+    elif options.arch == Architecture.avx2:
+      if options.type == DataType.float:
+        trans = Compiler_Intel.AVX2_Float(src, size)
+      else:
+        raise Exception('Type not supported (%s)'%(options.type))
+    else:
+      raise Exception('Architecture not supported (%s)'%(options.arch['name']))
     vecType = trans.type
     #Includes
     src += '//Includes'
@@ -27,8 +41,8 @@ class Compiler_Intel:
     src.indent()
     #Literals
     src += '//Literals'
-    src += 'const __m128 MASK_FALSE = _mm_setzero_ps();'
-    src += 'const __m128 MASK_TRUE = _mm_cmpeq_ps(MASK_FALSE, MASK_FALSE);'
+    src += 'const %s MASK_FALSE = %s;'%(trans.type, trans.zeroes)
+    src += 'const %s MASK_TRUE = %s;'%(trans.type, trans.ones)
     for var in k.get_literals():
       trans.set('const %s %s'%(vecType, var.name), literal_format%(var.value))
     src += ''
@@ -82,7 +96,7 @@ class Compiler_Intel:
             mask = stmt.mask.name
             output = stmt.var.name
             input = stmt.expr.name
-            src += '%s = _mm_or_ps(_mm_and_ps(%s, %s), _mm_andnot_ps(%s, %s));'%(output, mask, input, mask, output)
+            trans.mask(input, output, mask)
           else:
             src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
         elif isinstance(stmt.expr, BinaryOperation):
@@ -123,9 +137,7 @@ class Compiler_Intel:
           Compiler_Intel.compile_block(stmt.else_block, src, trans)
         src += '}'
       elif isinstance(stmt, WhileLoop):
-        #name = stmt.block.mask.name
-        #test = ' || '.join(['(%s[%d] != 0)'%(name, i) for i in range(trans.size)])
-        test = '_mm_movemask_ps(%s)'%(stmt.block.mask.name)
+        test = '%s(%s)'%(trans.test, stmt.block.mask.name)
         src += 'while(%s) {'%(test)
         Compiler_Intel.compile_block(stmt.block, src, trans)
         src += '}'
@@ -133,6 +145,9 @@ class Compiler_Intel:
         raise Exception('Can\'t handle that (%s)'%(stmt.__class__))
     src.unindent()
 
+  ################################################################################
+  # Translates kernel operations into vectorized C++ code
+  ################################################################################
   class Translator:
     def __init__(self, src, size):
       self.src = src
@@ -213,6 +228,8 @@ class Compiler_Intel:
       self.src += '%s(%s, %s);'%(func, args[0], args[1])
     def vector_1_2(self, func, args):
       self.src += '%s = %s(%s, %s);'%(args[0], func, args[1], args[2])
+    def vector_1_3(self, func, args):
+      self.src += '%s = %s(%s, %s, %s);'%(args[0], func, args[1], args[2], args[3])
     def scalar_1_1(self, func, args):
       output, input = args
       for i in range(self.size):
@@ -221,6 +238,8 @@ class Compiler_Intel:
       output, left, right = args
       for i in range(self.size):
         self.src += '%s[%d] = %s(%s[%d], %s[%d]);'%(output, i, func, left, i, right, i)
+    def mask_1_2(self, input, output, mask, or_, and_, andnot_):
+      self.src += '%s = %s(%s(%s, %s), %s(%s, %s));'%(output, or_, and_, mask, input, andnot_, mask, output)
     def error(self):
       raise Exception('Not implemented')
     #Abstract stubs
@@ -230,6 +249,8 @@ class Compiler_Intel:
     def load(self, *args):
       self.error()
     def store(self, *args):
+      self.error()
+    def mask(self, *args):
       self.error()
     #Python arithmetic operators
     def add(self, *args):
@@ -354,10 +375,16 @@ class Compiler_Intel:
     def trunc(self, *args):
       self.error()
 
+  ################################################################################
+  # Translates kernel operations into vectorized C++ code (SSE4.2, 32-bit float)
+  ################################################################################
   class SSE4_Float(Translator):
     def __init__(self, src, size):
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128'
+      self.test = '_mm_movemask_ps'
+      self.zeroes = '_mm_setzero_ps()'
+      self.ones = '_mm_cmpeq_ps(MASK_FALSE, MASK_FALSE)'
     #Misc
     def set(self, *args):
       self.vector_1_1('_mm_set1_ps', args)
@@ -365,6 +392,9 @@ class Compiler_Intel:
       self.vector_1_1('_mm_load_ps', args)
     def store(self, *args):
       self.vector_0_2('_mm_store_ps', args)
+    def mask(self, *args):
+      (input, output, mask) = args
+      self.mask_1_2(input, output, mask, '_mm_or_ps', '_mm_and_ps', '_mm_andnot_ps')
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_ps', args)
@@ -408,7 +438,8 @@ class Compiler_Intel:
     def min(self, *args):
       self.vector_1_2('_mm_min_ps', args)
     def round(self, *args):
-      self.scalar_1_1('round', args)
+      args += ('(_MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
     #Math functions (binary)
     def atan2(self, *args):
       self.scalar_1_2('atan2', args)
@@ -432,7 +463,8 @@ class Compiler_Intel:
     def atanh(self, *args):
       self.scalar_1_1('atanh', args)
     def ceil(self, *args):
-      self.scalar_1_1('ceil', args)
+      args += ('(_MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
     def cos(self, *args):
       self.scalar_1_1('cos', args)
     def cosh(self, *args):
@@ -448,7 +480,8 @@ class Compiler_Intel:
     def fabs(self, *args):
       self.scalar_1_1('fabs', args)
     def floor(self, *args):
-      self.scalar_1_1('floor', args)
+      args += ('(_MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
     def gamma(self, *args):
       self.scalar_1_1('tgamma', args)
     def lgamma(self, *args):
@@ -472,12 +505,19 @@ class Compiler_Intel:
     def tanh(self, *args):
       self.scalar_1_1('tanh', args)
     def trunc(self, *args):
-      self.scalar_1_1('trunc', args)
+      args += ('(_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
 
+  ################################################################################
+  # Translates kernel operations into vectorized C++ code (SSE4.2, 32-bit uint)
+  ################################################################################
   class SSE4_UInt32(Translator):
     def __init__(self, src, size):
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128i'
+      #self.test = '?'
+      self.zeroes = '_mm_setzero_si128()'
+      self.ones = '_mm_cmpeq_epi32(MASK_FALSE, MASK_FALSE)'
     #Misc
     def set(self, *args):
       self.vector_1_1('_mm_set1_epi32', args)
@@ -487,6 +527,9 @@ class Compiler_Intel:
     def store(self, *args):
       args = ('(%s*)(%s)'%(self.type, args[0]), args[1])
       self.vector_0_2('_mm_store_si128', args)
+    def mask(self, *args):
+      (input, output, mask) = args
+      self.mask_1_2(input, output, mask, '_mm_or_si128', '_mm_and_si128', '_mm_andnot_si128')
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_epi32', args)
@@ -494,3 +537,151 @@ class Compiler_Intel:
       self.vector_1_2('_mm_sub_epi32', args)
     def mul(self, *args):
       self.vector_1_2('_mm_mullo_epi32', args)
+    #Python bit operators
+    def bit_and(self, *args):
+      self.vector_1_2('_mm_and_si128', args)
+    def bit_andnot(self, *args):
+      self.vector_1_2('_mm_andnot_si128', args)
+    def bit_or(self, *args):
+      self.vector_1_2('_mm_or_si128', args)
+    def bit_xor(self, *args):
+      self.vector_1_2('_mm_xor_si128', args)
+
+  ################################################################################
+  # Translates kernel operations into vectorized C++ code (AVX2, 32-bit float)
+  ################################################################################
+  class AVX2_Float(Translator):
+    def __init__(self, src, size):
+      Compiler_Intel.Translator.__init__(self, src, size)
+      self.type = '__m256'
+      self.test = '_mm256_movemask_ps'
+      self.zeroes = '_mm256_setzero_ps()'
+      self.ones = '_mm256_cmp_ps(MASK_FALSE, MASK_FALSE, _CMP_EQ_UQ)'
+    #Misc
+    def set(self, *args):
+      self.vector_1_1('_mm256_set1_ps', args)
+    def load(self, *args):
+      self.vector_1_1('_mm256_load_ps', args)
+    def store(self, *args):
+      self.vector_0_2('_mm256_store_ps', args)
+    def mask(self, *args):
+      (input, output, mask) = args
+      self.mask_1_2(input, output, mask, '_mm256_or_ps', '_mm256_and_ps', '_mm256_andnot_ps')
+    #Python arithmetic operators
+    def add(self, *args):
+      self.vector_1_2('_mm256_add_ps', args)
+    def sub(self, *args):
+      self.vector_1_2('_mm256_sub_ps', args)
+    def mul(self, *args):
+      self.vector_1_2('_mm256_mul_ps', args)
+    def div(self, *args):
+      self.vector_1_2('_mm256_div_ps', args)
+    def mod(self, *args):
+      self.scalar_1_2('fmod', args)
+    def pow(self, *args):
+      self.scalar_1_2('pow', args)
+    #Python comparison operators
+    def eq(self, *args):
+      args += ('_CMP_EQ_UQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    def ne(self, *args):
+      args += ('_CMP_NEQ_UQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    def ge(self, *args):
+      args += ('_CMP_GE_OQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    def gt(self, *args):
+      args += ('_CMP_GT_OQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    def le(self, *args):
+      args += ('_CMP_LE_OQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    def lt(self, *args):
+      args += ('_CMP_LT_OQ',)
+      self.vector_1_3('_mm256_cmp_ps', args)
+    #Python bit operators
+    def bit_and(self, *args):
+      self.vector_1_2('_mm256_and_ps', args)
+    def bit_andnot(self, *args):
+      self.vector_1_2('_mm256_andnot_ps', args)
+    def bit_or(self, *args):
+      self.vector_1_2('_mm256_or_ps', args)
+    def bit_xor(self, *args):
+      self.vector_1_2('_mm256_xor_ps', args)
+    #Python intrinsics
+    def abs(self, *args):
+      self.scalar_1_1('fabs', args)
+    def max(self, *args):
+      self.vector_1_2('_mm256_max_ps', args)
+    def min(self, *args):
+      self.vector_1_2('_mm256_min_ps', args)
+    def round(self, *args):
+      args += ('(_MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
+    #Math functions (binary)
+    def atan2(self, *args):
+      self.scalar_1_2('atan2', args)
+    def copysign(self, *args):
+      self.scalar_1_2('copysign', args)
+    def fmod(self, *args):
+      self.scalar_1_2('fmod', args)
+    def hypot(self, *args):
+      self.scalar_1_2('hypot', args)
+    #Math functions (unary)
+    def acos(self, *args):
+      self.scalar_1_1('acos', args)
+    def acosh(self, *args):
+      self.scalar_1_1('acosh', args)
+    def asin(self, *args):
+      self.scalar_1_1('asin', args)
+    def asinh(self, *args):
+      self.scalar_1_1('asinh', args)
+    def atan(self, *args):
+      self.scalar_1_1('atan', args)
+    def atanh(self, *args):
+      self.scalar_1_1('atanh', args)
+    def ceil(self, *args):
+      args += ('(_MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
+    def cos(self, *args):
+      self.scalar_1_1('cos', args)
+    def cosh(self, *args):
+      self.scalar_1_1('cosh', args)
+    def erf(self, *args):
+      self.scalar_1_1('erf', args)
+    def erfc(self, *args):
+      self.scalar_1_1('erfc', args)
+    def exp(self, *args):
+      self.scalar_1_1('exp', args)
+    def expm1(self, *args):
+      self.scalar_1_1('expm1', args)
+    def fabs(self, *args):
+      self.scalar_1_1('fabs', args)
+    def floor(self, *args):
+      args += ('(_MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
+    def gamma(self, *args):
+      self.scalar_1_1('tgamma', args)
+    def lgamma(self, *args):
+      self.scalar_1_1('lgamma', args)
+    def log(self, *args):
+      self.scalar_1_1('log', args)
+    def log10(self, *args):
+      self.scalar_1_1('log10', args)
+    def log1p(self, *args):
+      self.scalar_1_1('log1p', args)
+    def log2(self, *args):
+      self.scalar_1_1('log2', args)
+    def sin(self, *args):
+      self.scalar_1_1('sin', args)
+    def sinh(self, *args):
+      self.scalar_1_1('sinh', args)
+    def sqrt(self, *args):
+      self.vector_1_1('_mm256_sqrt_ps', args)
+    def tan(self, *args):
+      self.scalar_1_1('tan', args)
+    def tanh(self, *args):
+      self.scalar_1_1('tanh', args)
+    def trunc(self, *args):
+      args += ('(_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)',)
+      self.vector_1_2('_mm_round_ps', args)
