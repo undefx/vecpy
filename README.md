@@ -48,10 +48,10 @@ Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. Conditional operations within `if-elif-else` blocks and `while` loops are fully implemented, and the following Python operators, functions, and constants are currently available:
 
   - **Operators**
-    - Unary: +, -
+    - Unary: +, -, ~
     - Arithmetic: +, -, \*, /, %, \*\*
     - Comparison: ==, !=, >, >=, <, <=
-    - Boolean: and, or
+    - Boolean: and, or, not
   - **Functions**
     - global: abs, max, min, pow, round
     - math: acos, acosh, asin, asinh, atan, atan2, atanh, ceil, copysign, cos, cosh, erf, erfc, exp, expm1, fabs, floor, fmod, gamma, hypot, lgamma, log, log10, log1p, log2, pow, sin, sinh, sqrt, tan, tanh, trunc
