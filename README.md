@@ -45,7 +45,7 @@ Features and Functionality
 =====
 Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 
-VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. Conditional operations within _if/elif/else_ branches and _while_ loops are fully implemented, and the following Python operators, functions, and constants are currently available:
+VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. Conditional operations within `if-elif-else` blocks and `while` loops are fully implemented, and the following Python operators, functions, and constants are currently available:
 
   - **Operators**
     - Unary: +, -
