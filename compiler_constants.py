@@ -28,6 +28,12 @@ class DataType:
   float  = 'float'
   uint32 = 'unsigned int'
 
+  #Utility functions
+  def is_floating(type):
+    return type in (DataType.float,)
+  def is_integral(type):
+    return type in (DataType.uint32,)
+
 #Available language bindings
 class Binding:
   all    = 'all'

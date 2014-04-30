@@ -113,7 +113,11 @@ class Compiler_Generic:
           op = stmt.expr.op
           var = stmt.var.name
           input = stmt.expr.var.name
-          if op in ('~',):
+          if op in ('~', '!'):
+            if op in ('~',) and not DataType.is_integral(options.type):
+              raise Exception('Operator requires integer operand (%s)'%(op))
+            if op in ('!',) and (not stmt.var.is_mask or not stmt.expr.var.is_mask):
+              raise Exception('Operator requires boolean operand (%s)'%(op))
             src += '%s = %s%s;'%(var, op, input)
           elif op in Intrinsic.unary_functions + Math.unary_functions:
             #Special cases

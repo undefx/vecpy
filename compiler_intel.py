@@ -172,6 +172,9 @@ class Compiler_Intel:
         Operator.bit_andnot: self.bit_andnot,
         Operator.bit_or: self.bit_or,
         Operator.bit_xor: self.bit_xor,
+        Operator.bit_not: self.bit_not,
+        #Python boolean operators
+        Operator.bool_not: self.bool_not,
         #Python intrinsics
         'abs': self.abs,
         'max': self.max,
@@ -286,6 +289,11 @@ class Compiler_Intel:
     def bit_or(self, *args):
       self.error()
     def bit_xor(self, *args):
+      self.error()
+    def bit_not(self, *args):
+      self.error()
+    #Python boolean operators
+    def bool_not(self, *args):
       self.error()
     #Python intrinsics
     def abs(self, *args):
@@ -430,6 +438,12 @@ class Compiler_Intel:
       self.vector_1_2('_mm_or_ps', args)
     def bit_xor(self, *args):
       self.vector_1_2('_mm_xor_ps', args)
+    def bit_not(self, *args):
+      args += ('MASK_TRUE',)
+      self.bit_xor(*args)
+    #Python boolean operators
+    def bool_not(self, *args):
+      self.bit_not(*args)
     #Python intrinsics
     def abs(self, *args):
       self.scalar_1_1('fabs', args)
@@ -546,6 +560,12 @@ class Compiler_Intel:
       self.vector_1_2('_mm_or_si128', args)
     def bit_xor(self, *args):
       self.vector_1_2('_mm_xor_si128', args)
+    def bit_not(self, *args):
+      args += ('MASK_TRUE',)
+      self.bit_xor(*args)
+    #Python boolean operators
+    def bool_not(self, *args):
+      self.bit_not(*args)
 
   ################################################################################
   # Translates kernel operations into vectorized C++ code (AVX2, 32-bit float)
@@ -608,6 +628,12 @@ class Compiler_Intel:
       self.vector_1_2('_mm256_or_ps', args)
     def bit_xor(self, *args):
       self.vector_1_2('_mm256_xor_ps', args)
+    def bit_not(self, *args):
+      args += ('MASK_TRUE',)
+      self.bit_xor(*args)
+    #Python boolean operators
+    def bool_not(self, *args):
+      self.bit_not(*args)
     #Python intrinsics
     def abs(self, *args):
       self.scalar_1_1('fabs', args)

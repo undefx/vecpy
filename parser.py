@@ -89,20 +89,40 @@ class Parser:
   def unaryop(self, block, node):
     operand = self.expression(block, node.operand)
     if isinstance(node.op, ast.UAdd):
-      return operand
-    if isinstance(node.op, ast.USub):
+      #No-Op
+      var = operand
+    elif isinstance(node.op, ast.USub):
       if operand.value is not None:
-        return self.add_literal(-operand.value)
+        #It's a literal, return the negation
+        var = self.add_literal(-operand.value)
       else:
-        #Emulate negation by subtracting from zero (faster than multiplying by negative one)
+        #It's an expression, subtract from zero (faster than multiplying by -1)
         var = self.add_variable(None)
         zero = self.add_literal(0, 'ZERO')
         operation = kernel.BinaryOperation(zero, kernel.Operator.subtract, operand)
         assignment = kernel.Assignment(var, operation)
         block.add(assignment)
-        return var
+    elif isinstance(node.op, ast.Invert):
+      #Make sure it's numeric
+      if operand.is_mask:
+        raise Exception('Unary invert requires a numeric operand')
+      #Bit-flip
+      var = self.add_variable(None)
+      operation = kernel.UnaryOperation(kernel.Operator.bit_not, operand)
+      assignment = kernel.Assignment(var, operation)
+      block.add(assignment)
+    elif isinstance(node.op, ast.Not):
+      #Make sure it's boolean
+      if not operand.is_mask:
+        raise Exception('Unary not requires a boolean operand')
+      #Invert the mask
+      var = self.add_variable(None, is_mask=True)
+      operation = kernel.UnaryOperation(kernel.Operator.bool_not, operand)
+      assignment = kernel.Assignment(var, operation)
+      block.add(assignment)
     else:
       raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
+    return var
 
   #Parses a comparison operator (AST CmpOp)
   def cmpop(self, op):
