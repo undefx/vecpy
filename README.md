@@ -45,7 +45,7 @@ Features and Functionality
 =====
 Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 
-VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. The following Python operators, functions, and constants are currently supported:
+VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. Conditional operations within _if/elif/else_ branches and _while_ loops are fully implemented, and the following Python operators, functions, and constants are currently available:
 
   - **Operators**
     - Unary: +, -
@@ -56,7 +56,6 @@ VecPy aims to implement a sufficiently large feature set to be useful for meanin
     - math: acos, acosh, asin, asinh, atan, atan2, atanh, ceil, copysign, cos, cosh, erf, erfc, exp, expm1, fabs, floor, fmod, gamma, hypot, lgamma, log, log10, log1p, log2, pow, sin, sinh, sqrt, tan, tanh, trunc
   - **Constants**
     - math: e, pi
-
 
 VecPy provides many options to allow for extensive customization. The following data types and language bindings are currently supported:
 
