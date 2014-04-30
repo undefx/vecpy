@@ -51,6 +51,7 @@ VecPy aims to implement a sufficiently large feature set to be useful for meanin
     - Unary: +, -
     - Arithmetic: +, -, \*, /, %, \*\*
     - Comparison: ==, !=, >, >=, <, <=
+    - Boolean: and, or
   - **Functions**
     - global: abs, max, min, pow, round
     - math: acos, acosh, asin, asinh, atan, atan2, atanh, ceil, copysign, cos, cosh, erf, erfc, exp, expm1, fabs, floor, fmod, gamma, hypot, lgamma, log, log10, log1p, log2, pow, sin, sinh, sqrt, tan, tanh, trunc
