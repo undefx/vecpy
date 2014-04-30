@@ -48,10 +48,11 @@ Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. The following Python operators, functions, and constants are currently supported:
 
   - **Operators**
-    - Binary: +, -, \*, /, %, \*\*
     - Unary: +, -
+    - Arithmetic: +, -, \*, /, %, \*\*
+    - Comparison: ==, !=, >, >=, <, <=
   - **Functions**
-    - global: abs, max, min, pow
+    - global: abs, max, min, pow, round
     - math: acos, acosh, asin, asinh, atan, atan2, atanh, ceil, copysign, cos, cosh, erf, erfc, exp, expm1, fabs, floor, fmod, gamma, hypot, lgamma, log, log10, log1p, log2, pow, sin, sinh, sqrt, tan, tanh, trunc
   - **Constants**
     - math: e, pi
@@ -72,6 +73,7 @@ VecPy relies on multi-threading and SIMD execution to achieve the fastest possib
   - **Architectures**
     - Generic (no SIMD)
     - SSE4.2
+    - AVX2
   - **Operating Systems**
     - Linux
 
