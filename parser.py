@@ -354,6 +354,15 @@ class Parser:
       else:
         raise Exception('Unexpected Assignment (%s)'%(target.__class__))
 
+  #Parses an augmenting assignment (AST AugAssign)
+  def augassign(self, block, stmt):
+    #Evaluate the assignment(s)
+    src = ast.BinOp(stmt.target, stmt.op, stmt.value)
+    dst = stmt.target
+    result = self.assign_single(block, src, dst)
+    if result is not None:
+      block.add(result)
+
   #Parses a single returned element
   def return_single(self, val):
     if not isinstance(val, ast.Name):
@@ -402,6 +411,8 @@ class Parser:
       self.if_(block, stmt)
     elif isinstance(stmt, ast.While):
       self.while_(block, stmt)
+    elif isinstance(stmt, ast.AugAssign):
+      self.augassign(block, stmt)
     else:
       Parser._dump(stmt, 'Unexpected Statement')
       raise Exception('Unexpected Statement (%s)'%(stmt.__class__))

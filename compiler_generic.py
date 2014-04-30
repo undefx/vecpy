@@ -53,7 +53,7 @@ class Compiler_Generic:
     src += '//Begin kernel logic'
     src += '{'
     src += ''
-    Compiler_Generic.compile_block(k.block, src)
+    Compiler_Generic.compile_block(k.block, src, options)
     src += ''
     src += '}'
     src += '//End kernel logic'
@@ -73,7 +73,7 @@ class Compiler_Generic:
     src += ''
     return src.get_code()
 
-  def compile_block(block, src):
+  def compile_block(block, src, options):
     src.indent()
     for stmt in block.code:
       if isinstance(stmt, Comment):
@@ -140,14 +140,14 @@ class Compiler_Generic:
           raise Exception('Bad assignment')
       elif isinstance(stmt, IfElse):
         src += 'if(%s) {'%(stmt.if_block.mask.name)
-        Compiler_Generic.compile_block(stmt.if_block, src)
+        Compiler_Generic.compile_block(stmt.if_block, src, options)
         if len(stmt.else_block.code) > 0:
           src += '} else {'
-          Compiler_Generic.compile_block(stmt.else_block, src)
+          Compiler_Generic.compile_block(stmt.else_block, src, options)
         src += '}'
       elif isinstance(stmt, WhileLoop):
         src += 'while(%s) {'%(stmt.block.mask.name)
-        Compiler_Generic.compile_block(stmt.block, src)
+        Compiler_Generic.compile_block(stmt.block, src, options)
         src += '}'
       else:
         raise Exception('Can\'t handle that (%s)'%(stmt.__class__))

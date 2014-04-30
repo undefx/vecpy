@@ -123,8 +123,9 @@ class Compiler_Intel:
           Compiler_Intel.compile_block(stmt.else_block, src, trans)
         src += '}'
       elif isinstance(stmt, WhileLoop):
-        name = stmt.block.mask.name
-        test = ' || '.join(['(%s[%d] != 0)'%(name, i) for i in range(trans.size)])
+        #name = stmt.block.mask.name
+        #test = ' || '.join(['(%s[%d] != 0)'%(name, i) for i in range(trans.size)])
+        test = '_mm_movemask_ps(%s)'%(stmt.block.mask.name)
         src += 'while(%s) {'%(test)
         Compiler_Intel.compile_block(stmt.block, src, trans)
         src += '}'
