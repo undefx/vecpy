@@ -55,7 +55,11 @@ class Operator:
   bit_or = '|'
   bit_xor = '^'
   bit_not = '~'
+  bool_and = '&&'
+  bool_or = '||'
   bool_not = '!'
+  shift_left = '<<'
+  shift_right = '>>'
 
 #Built-in Python functions
 class Intrinsic:

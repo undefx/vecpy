@@ -78,6 +78,16 @@ class Parser:
       op = kernel.Operator.mod
     elif isinstance(node.op, ast.Pow):
       op = kernel.Operator.pow
+    elif isinstance(node.op, ast.BitAnd):
+      op = kernel.Operator.bit_and
+    elif isinstance(node.op, ast.BitOr):
+      op = kernel.Operator.bit_or
+    elif isinstance(node.op, ast.BitXor):
+      op = kernel.Operator.bit_xor
+    elif isinstance(node.op, ast.LShift):
+      op = kernel.Operator.shift_left
+    elif isinstance(node.op, ast.RShift):
+      op = kernel.Operator.shift_right
     else:
       raise Exception('Unexpected BinOp (%s)'%(node.op.__class__))
     operation = kernel.BinaryOperation(left, op, right)
@@ -240,9 +250,9 @@ class Parser:
     left = self.expression(block, node.values[0])
     right = self.expression(block, node.values[1])
     if isinstance(node.op, ast.And):
-      op = kernel.Operator.bit_and
+      op = kernel.Operator.bool_and
     elif isinstance(node.op, ast.Or):
-      op = kernel.Operator.bit_or
+      op = kernel.Operator.bool_or
     else:
       raise Exception('Unexpected BoolOp (%s)'%(node.op.__class__))
     operation = kernel.BinaryOperation(left, op, right)

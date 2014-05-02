@@ -89,7 +89,7 @@ class Compiler_Generic:
           var = stmt.var.name
           left = stmt.expr.left.name
           right = stmt.expr.right.name
-          if op in ('+', '-', '*', '/', '&', '&~', '|', '^'):
+          if op in ('+', '-', '*', '/', '&', '&~', '|', '^', '&&', '||', '<<', '>>'):
             if op == '&~':
               src += '%s = ~%s & %s;'%(var, left, right)
             else:

@@ -25,6 +25,8 @@ class Compiler_Intel:
     elif options.arch == Architecture.avx2:
       if options.type == DataType.float:
         trans = Compiler_Intel.AVX2_Float(src, size)
+      elif options.type == DataType.uint32:
+        trans = Compiler_Intel.AVX2_UInt32(src, size)
       else:
         raise Exception('Type not supported (%s)'%(options.type))
     else:
@@ -39,10 +41,12 @@ class Compiler_Intel:
     src += 'static void %s_vector(KernelArgs* args) {'%(k.name)
     src += ''
     src.indent()
+    #Target-dependent setup
+    src += '//Setup'
+    trans.setup()
+    src += ''
     #Literals
     src += '//Literals'
-    src += 'const %s MASK_FALSE = %s;'%(trans.type, trans.zeroes)
-    src += 'const %s MASK_TRUE = %s;'%(trans.type, trans.ones)
     for var in k.get_literals():
       trans.set('const %s %s'%(vecType, var.name), literal_format%(var.value))
     src += ''
@@ -105,7 +109,14 @@ class Compiler_Intel:
           left = stmt.expr.left.name
           right = stmt.expr.right.name
           if op in trans.operations:
-            trans.operations[op](var, left, right)
+            #Check for bit-shift optimization
+            if op in (Operator.shift_left, Operator.shift_right) and stmt.expr.right.value is not None:
+              #Optimized shift
+              right = '%d'%(stmt.expr.right.value)
+              trans.operations[op](var, left, right, True)
+            else:
+              #Normal binary operation
+              trans.operations[op](var, left, right)
           else:
             raise Exception('Unknown binary operator/function (%s)'%(op))
         elif isinstance(stmt.expr, UnaryOperation):
@@ -173,7 +184,11 @@ class Compiler_Intel:
         Operator.bit_or: self.bit_or,
         Operator.bit_xor: self.bit_xor,
         Operator.bit_not: self.bit_not,
+        Operator.shift_left: self.shift_left,
+        Operator.shift_right: self.shift_right,
         #Python boolean operators
+        Operator.bool_and: self.bool_and,
+        Operator.bool_or: self.bool_or,
         Operator.bool_not: self.bool_not,
         #Python intrinsics
         'abs': self.abs,
@@ -242,11 +257,16 @@ class Compiler_Intel:
       for i in range(self.size):
         self.src += '%s[%d] = %s(%s[%d], %s[%d]);'%(output, i, func, left, i, right, i)
     def mask_1_2(self, input, output, mask, or_, and_, andnot_):
-      self.src += '%s = %s(%s(%s, %s), %s(%s, %s));'%(output, or_, and_, mask, input, andnot_, mask, output)
+      if mask == 'MASK_TRUE':
+        self.src += '%s = %s;'%(output, input)
+      else:
+        self.src += '%s = %s(%s(%s, %s), %s(%s, %s));'%(output, or_, and_, mask, input, andnot_, mask, output)
     def error(self):
       raise Exception('Not implemented')
     #Abstract stubs
     #Misc
+    def setup(self):
+      self.error()
     def set(self, *args):
       self.error()
     def load(self, *args):
@@ -292,7 +312,15 @@ class Compiler_Intel:
       self.error()
     def bit_not(self, *args):
       self.error()
+    def shift_left(self, *args):
+      self.error()
+    def shift_right(self, *args):
+      self.error()
     #Python boolean operators
+    def bool_and(self, *args):
+      self.error()
+    def bool_or(self, *args):
+      self.error()
     def bool_not(self, *args):
       self.error()
     #Python intrinsics
@@ -391,9 +419,17 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128'
       self.test = '_mm_movemask_ps'
-      self.zeroes = '_mm_setzero_ps()'
-      self.ones = '_mm_cmpeq_ps(MASK_FALSE, MASK_FALSE)'
     #Misc
+    def setup(self):
+      self.src += 'const %s MASK_FALSE = _mm_setzero_ps();'%(self.type)
+      self.src += 'const %s MASK_TRUE = _mm_cmpeq_ps(MASK_FALSE, MASK_FALSE);'%(self.type)
+      #for i in range(self.size):
+      #  slots = []
+      #  for j in range(self.size):
+      #    slots.append('%ff'%(1 if i == j else 0))
+      #  slots.reverse()
+      #  lane = '_mm_cmpneq_ps(MASK_FALSE, _mm_set_ps(%s))'%(', '.join(slots))
+      #  self.src += 'const %s MASK_LANE_%d = %s;'%(self.type, i, lane)
     def set(self, *args):
       self.vector_1_1('_mm_set1_ps', args)
     def load(self, *args):
@@ -442,6 +478,10 @@ class Compiler_Intel:
       args += ('MASK_TRUE',)
       self.bit_xor(*args)
     #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
     def bool_not(self, *args):
       self.bit_not(*args)
     #Python intrinsics
@@ -529,10 +569,19 @@ class Compiler_Intel:
     def __init__(self, src, size):
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128i'
-      #self.test = '?'
-      self.zeroes = '_mm_setzero_si128()'
-      self.ones = '_mm_cmpeq_epi32(MASK_FALSE, MASK_FALSE)'
+      self.test = '_mm_movemask_epi8'
     #Misc
+    def setup(self):
+      self.src += 'const %s MASK_FALSE = _mm_setzero_si128();'%(self.type)
+      self.src += 'const %s MASK_TRUE = _mm_cmpeq_epi32(MASK_FALSE, MASK_FALSE);'%(self.type)
+      self.src += 'const %s SIGN_BITS = _mm_set1_epi32(0x80000000);'%(self.type)
+      for i in range(self.size):
+        slots = []
+        for j in range(self.size):
+          slots.append('%d'%(1 if i == j else 0))
+        slots.reverse()
+        lane = '_mm_xor_si128(MASK_TRUE, _mm_cmpeq_epi32(MASK_FALSE, _mm_set_epi32(%s)))'%(', '.join(slots))
+        self.src += 'const %s MASK_LANE_%d = %s;'%(self.type, i, lane)
     def set(self, *args):
       self.vector_1_1('_mm_set1_epi32', args)
     def load(self, *args):
@@ -551,6 +600,26 @@ class Compiler_Intel:
       self.vector_1_2('_mm_sub_epi32', args)
     def mul(self, *args):
       self.vector_1_2('_mm_mullo_epi32', args)
+    #Python comparison operators
+    def eq(self, *args):
+      self.vector_1_2('_mm_cmpeq_epi32', args)
+    def ne(self, *args):
+      #Not equal
+      self.bit_not(args[0], '_mm_cmpeq_epi32(%s, %s)'%(args[1], args[2]))
+    def ge(self, *args):
+      #Not less than
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.bit_not(args[0], '_mm_cmplt_epi32(%s, %s)'%(args[1], args[2]))
+    def gt(self, *args):
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.vector_1_2('_mm_cmpgt_epi32', args)
+    def le(self, *args):
+      #Not greater than
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.bit_not(args[0], '_mm_cmpgt_epi32(%s, %s)'%(args[1], args[2]))
+    def lt(self, *args):
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.vector_1_2('_mm_cmplt_epi32', args)
     #Python bit operators
     def bit_and(self, *args):
       self.vector_1_2('_mm_and_si128', args)
@@ -564,8 +633,34 @@ class Compiler_Intel:
       args += ('MASK_TRUE',)
       self.bit_xor(*args)
     #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
     def bool_not(self, *args):
       self.bit_not(*args)
+    def shift_left(self, *args):
+      if len(args) == 4 and args[3]:
+        #Shifting all lanes by the same constant
+        self.vector_1_2('_mm_slli_epi32', args[0:2])
+      else:
+        #Shift each lane separately
+        (output, left, right) = args
+        for i in range(self.size):
+          mask = 'MASK_LANE_%d'%(i)
+          input = '_mm_slli_epi32(%s, _mm_extract_epi32(%s, %d))'%(left, right, i)
+          self.src += '%s = _mm_or_si128(_mm_and_si128(%s, %s), _mm_andnot_si128(%s, %s));'%(output, mask, input, mask, output)
+    def shift_right(self, *args):
+      if len(args) == 4 and args[3]:
+        #Shifting all lanes by the same constant
+        self.vector_1_2('_mm_srli_epi32', args[0:3])
+      else:
+        #Shift each lane separately
+        (output, left, right) = args
+        for i in range(self.size):
+          mask = 'MASK_LANE_%d'%(i)
+          input = '_mm_srli_epi32(%s, _mm_extract_epi32(%s, %d))'%(left, right, i)
+          self.src += '%s = _mm_or_si128(_mm_and_si128(%s, %s), _mm_andnot_si128(%s, %s));'%(output, mask, input, mask, output)
 
   ################################################################################
   # Translates kernel operations into vectorized C++ code (AVX2, 32-bit float)
@@ -575,9 +670,17 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m256'
       self.test = '_mm256_movemask_ps'
-      self.zeroes = '_mm256_setzero_ps()'
-      self.ones = '_mm256_cmp_ps(MASK_FALSE, MASK_FALSE, _CMP_EQ_UQ)'
     #Misc
+    def setup(self):
+      self.src += 'const %s MASK_FALSE = _mm256_setzero_ps();'%(self.type)
+      self.src += 'const %s MASK_TRUE = _mm256_cmp_ps(MASK_FALSE, MASK_FALSE, _CMP_EQ_UQ);'%(self.type)
+      #for i in range(self.size):
+      #  slots = []
+      #  for j in range(self.size):
+      #    slots.append('%ff'%(1 if i == j else 0))
+      #  slots.reverse()
+      #  lane = '_mm256_cmp_ps(MASK_FALSE, _mm256_set_ps(%s), _CMP_NEQ_UQ)'%(', '.join(slots))
+      #  self.src += 'const %s MASK_LANE_%d = %s;'%(self.type, i, lane)
     def set(self, *args):
       self.vector_1_1('_mm256_set1_ps', args)
     def load(self, *args):
@@ -632,6 +735,10 @@ class Compiler_Intel:
       args += ('MASK_TRUE',)
       self.bit_xor(*args)
     #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
     def bool_not(self, *args):
       self.bit_not(*args)
     #Python intrinsics
@@ -711,3 +818,97 @@ class Compiler_Intel:
     def trunc(self, *args):
       args += ('(_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)',)
       self.vector_1_2('_mm_round_ps', args)
+
+  ################################################################################
+  # Translates kernel operations into vectorized C++ code (AVX2, 32-bit uint)
+  ################################################################################
+  class AVX2_UInt32(Translator):
+    def __init__(self, src, size):
+      Compiler_Intel.Translator.__init__(self, src, size)
+      self.type = '__m256i'
+      self.test = '_mm256_movemask_epi8'
+    #Misc
+    def setup(self):
+      self.src += 'const %s MASK_FALSE = _mm256_setzero_si256();'%(self.type)
+      self.src += 'const %s MASK_TRUE = _mm256_cmpeq_epi32(MASK_FALSE, MASK_FALSE);'%(self.type)
+      self.src += 'const %s SIGN_BITS = _mm256_set1_epi32(0x80000000);'%(self.type)
+      for i in range(self.size):
+        slots = []
+        for j in range(self.size):
+          slots.append('%d'%(1 if i == j else 0))
+        slots.reverse()
+        lane = '_mm256_xor_si256(MASK_TRUE, _mm256_cmpeq_epi32(MASK_FALSE, _mm256_set_epi32(%s)))'%(', '.join(slots))
+        self.src += 'const %s MASK_LANE_%d = %s;'%(self.type, i, lane)
+    def set(self, *args):
+      self.vector_1_1('_mm256_set1_epi32', args)
+    def load(self, *args):
+      args = (args[0], '(const %s*)(%s)'%(self.type, args[1]))
+      self.vector_1_1('_mm256_load_si256', args)
+    def store(self, *args):
+      args = ('(%s*)(%s)'%(self.type, args[0]), args[1])
+      self.vector_0_2('_mm256_store_si256', args)
+    def mask(self, *args):
+      (input, output, mask) = args
+      self.mask_1_2(input, output, mask, '_mm256_or_si256', '_mm256_and_si256', '_mm256_andnot_si256')
+    #Python arithmetic operators
+    def add(self, *args):
+      self.vector_1_2('_mm256_add_epi32', args)
+    def sub(self, *args):
+      self.vector_1_2('_mm256_sub_epi32', args)
+    def mul(self, *args):
+      self.vector_1_2('_mm256_mullo_epi32', args)
+    #Python comparison operators
+    def eq(self, *args):
+      self.vector_1_2('_mm256_cmpeq_epi32', args)
+    def ne(self, *args):
+      #Not equal
+      self.bit_not(args[0], '_mm256_cmpeq_epi32(%s, %s)'%(args[1], args[2]))
+    def ge(self, *args):
+      #Greater than or equal to
+      left, right = '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2])
+      args = (args[0], '_mm256_cmpgt_epi32(%s, %s)'%(left, right), '_mm256_cmpeq_epi32(%s, %s)'%(args[1], args[2]))
+      self.bit_or(args)
+    def gt(self, *args):
+      args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
+      self.vector_1_2('_mm256_cmpgt_epi32', args)
+    def le(self, *args):
+      #Not greater than
+      args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
+      self.bit_not(args[0], '_mm256_cmpgt_epi32(%s, %s)'%(args[1], args[2]))
+    def lt(self, *args):
+      #Greater than with operands switched
+      args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]))
+      self.vector_1_2('_mm256_cmpgt_epi32', args)
+    #Python bit operators
+    def bit_and(self, *args):
+      self.vector_1_2('_mm256_and_si256', args)
+    def bit_andnot(self, *args):
+      self.vector_1_2('_mm256_andnot_si256', args)
+    def bit_or(self, *args):
+      self.vector_1_2('_mm256_xor_si256', args)
+    def bit_xor(self, *args):
+      self.vector_1_2('_mm256_xor_si256', args)
+    def bit_not(self, *args):
+      args += ('MASK_TRUE',)
+      self.bit_xor(*args)
+    #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
+    def bool_not(self, *args):
+      self.bit_not(*args)
+    def shift_left(self, *args):
+      if len(args) == 4 and args[3]:
+        #Shifting all lanes by the same constant
+        self.vector_1_2('_mm256_slli_epi32', args[0:2])
+      else:
+        #Shift each lane separately
+        self.vector_1_2('_mm256_sllv_epi32', args)
+    def shift_right(self, *args):
+      if len(args) == 4 and args[3]:
+        #Shifting all lanes by the same constant
+        self.vector_1_2('_mm256_srli_epi32', args[0:3])
+      else:
+        #Shift each lane separately
+        self.vector_1_2('_mm256_srlv_epi32', args[0:3])
