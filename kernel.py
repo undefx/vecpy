@@ -7,7 +7,7 @@ The Kernel is a set of operations to be performed on a set of data.
 class Variable:
   #A unique variable identifier
   index = 0
-  def __init__(self, name, is_arg, is_temp, is_mask, value):
+  def __init__(self, name, is_arg, is_uniform, is_temp, is_mask, value):
     if name is None:
       if value is None:
         if is_mask:
@@ -21,7 +21,9 @@ class Variable:
     self.name = name
     #Whether or not the variable is an argument
     self.is_arg = is_arg
-    #Whether or not the variable was inferred
+    #Whether or not the variable is a uniform (scalar) argument
+    self.is_uniform = is_uniform
+    #Whether or not the variable is implicit
     self.is_temp = is_temp
     #Whether or not this variable is a bit mask
     self.is_mask = is_mask
@@ -219,8 +221,8 @@ class Kernel:
     #The default docstring
     self.docstring = 'An undocumented (but probably awesome) kernel function.'
     #Literal masks
-    self.mask_true = Variable('MASK_TRUE', False, False, True, None)
-    self.mask_false = Variable('MASK_FALSE', False, False, True, None)
+    self.mask_true = Variable('MASK_TRUE', False, False, False, True, None)
+    self.mask_false = Variable('MASK_FALSE', False, False, False, True, None)
     #The kernel's code block
     self.block = Block(self.mask_true)
 
@@ -256,9 +258,9 @@ class Kernel:
     self.docstring = docstring
 
   #Returns a list of arguments sorted by order of appearance
-  def get_arguments(self, input=False, output=False):
+  def get_arguments(self, input=None, output=None, uniform=None):
     args = sorted(list(self.arguments.values()), key=lambda arg: arg.index)
-    return [arg for arg in args if (not input or arg.input) and (not output or arg.output)]
+    return [arg for arg in args if (input is None or input == arg.input) and (output is None or output == arg.output) and (uniform is None or uniform == arg.is_uniform)]
 
   #Returns a list of literals sorted by value
   def get_literals(self):

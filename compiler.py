@@ -60,7 +60,7 @@ class Compiler:
     src += '}'
     src += 'static bool checkArgs(KernelArgs* args) {'
     src.indent()
-    for arg in k.get_arguments():
+    for arg in k.get_arguments(uniform=False):
       src += 'if(!isAligned(args->%s)) {'%(arg.name)
       src.indent()
       src += 'printf("Array not aligned (%s)\\n");'%(arg.name)
@@ -96,7 +96,10 @@ class Compiler:
     src += 'for(int t = 0; t < numThreads; t++) {'
     src.indent()
     for arg in k.get_arguments():
-      src += 'threadArgs[t].%s = &args->%s[offset];'%(arg.name, arg.name)
+      if arg.is_uniform:
+        src += 'threadArgs[t].%s = args->%s;'%(arg.name, arg.name)
+      else:
+        src += 'threadArgs[t].%s = &args->%s[offset];'%(arg.name, arg.name)
     src += 'threadArgs[t].N = elementsPerThread;'
     src += 'offset += elementsPerThread;'
     src += 'pthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);'
@@ -117,7 +120,10 @@ class Compiler:
     src.indent()
     src += 'KernelArgs lastArgs;'
     for arg in k.get_arguments():
-      src += 'lastArgs.%s = &args->%s[offset];'%(arg.name, arg.name)
+      if arg.is_uniform:
+        src += 'lastArgs.%s = args->%s;'%(arg.name, arg.name)
+      else:
+        src += 'lastArgs.%s = &args->%s[offset];'%(arg.name, arg.name)
     src += 'lastArgs.N = args->N - offset;'
     src += '%s_scalar(&lastArgs);'%(k.name)
     src.unindent()
@@ -144,7 +150,7 @@ class Compiler:
     #Build the argument string
     arg_str = ''
     for arg in k.get_arguments():
-      arg_str += '%s* %s, '%(options.type, arg.name)
+      arg_str += '%s%s %s, '%(options.type, '*' if not arg.is_uniform else '', arg.name)
     #Wrapper for the core function
     src += '//Wrapper for the core function'
     src += 'extern "C" bool %s(%sint N) {'%(k.name, arg_str)
@@ -168,6 +174,14 @@ class Compiler:
     type = options.type
     module_name = 'VecPy_' + k.name
     args = k.get_arguments()
+    if DataType.is_floating(type):
+      uniform_pytype = 'f'
+      uniform_ctype = 'float'
+    elif DataType.is_integral(type):
+      uniform_pytype = 'I'
+      uniform_ctype = 'unsigned int'
+    else:
+      raise Exception('Unsupported data type (%s)'%(type))
     src = Formatter()
     src.section('VecPy generated entry point: Python')
     #Includes
@@ -179,31 +193,36 @@ class Compiler:
     src += 'static PyObject* %s_run(PyObject* self, PyObject* pyArgs) {'%(k.name)
     src.indent()
     src += '//Handles to Python objects and buffers'
-    obj_str = ', '.join('*obj_%s'%(arg.name) for arg in args)
-    buf_str = ', '.join('buf_%s'%(arg.name) for arg in args)
+    obj_str = ', '.join('*obj_%s'%(arg.name) for arg in k.get_arguments(uniform=False))
     src += 'PyObject %s;'%(obj_str)
+    if len(k.get_arguments(uniform=True)) > 0:
+      obj_str = ', '.join('vp_%s'%(arg.name) for arg in k.get_arguments(uniform=True))
+      src += '%s %s;'%(uniform_ctype, obj_str)
+    buf_str = ', '.join('vp_%s'%(arg.name) for arg in k.get_arguments(uniform=False))
     src += 'Py_buffer %s;'%(buf_str)
     src += '//Get Python objects'
-    obj_str = ', '.join('&obj_%s'%(arg.name) for arg in args)
-    src += 'if(!PyArg_ParseTuple(pyArgs, "%s", %s)) {'%('O' * len(args), obj_str)
+    obj_str = ', '.join('&%s_%s'%('vp' if arg.is_uniform else 'obj', arg.name) for arg in args)
+    decode_str = ''.join(uniform_pytype if arg.is_uniform else 'O' for arg in args)
+    src += 'if(!PyArg_ParseTuple(pyArgs, "%s", %s)) {'%(decode_str, obj_str)
     src.indent()
     src += 'printf("Error retrieving Python objects\\n");'
     src += 'return NULL;'
     src.unindent()
     src += '}'
     src += '//Get Python buffers from Python objects'
-    for arg in args:
-      src += 'if(PyObject_GetBuffer(obj_%s, &buf_%s, %s) != 0) {'%(arg.name, arg.name, 'PyBUF_WRITABLE' if arg.output else '0')
+    for arg in k.get_arguments(uniform=False):
+      src += 'if(PyObject_GetBuffer(obj_%s, &vp_%s, %s) != 0) {'%(arg.name, arg.name, 'PyBUF_WRITABLE' if arg.output else '0')
       src.indent()
       src += 'printf("Error retrieving Python buffer (%s)\\n");'%(arg.name)
       src += 'return NULL;'
       src.unindent()
       src += '}'
+    #Get the number of elements from the length of the first buffer
     src += '//Number of elements to process'
-    src += 'int N = buf_%s.len / sizeof(%s);'%(args[0].name, type)
+    src += 'int N = vp_%s.len / sizeof(%s);'%(k.get_arguments(uniform=False)[0].name, type)
     src += '//Check length for all buffers'
-    for arg in args:
-      src += 'if(buf_%s.len / sizeof(%s) != N) {'%(arg.name, type)
+    for arg in k.get_arguments(uniform=False):
+      src += 'if(vp_%s.len / sizeof(%s) != N) {'%(arg.name, type)
       src.indent()
       src += 'printf("Python buffer sizes don\'t match (%s)\\n");'%(arg.name)
       src += 'return NULL;'
@@ -212,13 +231,16 @@ class Compiler:
     src += '//Extract input arrays from buffers'
     src += 'KernelArgs args;'
     for arg in args:
-      src += 'args.%s = (%s*)buf_%s.buf;'%(arg.name, type, arg.name)
+      if arg.is_uniform:
+        src += 'args.%s = vp_%s;'%(arg.name, arg.name)
+      else:
+        src += 'args.%s = (%s*)vp_%s.buf;'%(arg.name, type, arg.name)
     src += 'args.N = N;'
     src += '//Run the kernel'
     src += 'bool result = run(&args);'
     src += '//Release buffers'
-    for arg in args:
-      src += 'PyBuffer_Release(&buf_%s);'%(arg.name)
+    for arg in k.get_arguments(uniform=False):
+      src += 'PyBuffer_Release(&vp_%s);'%(arg.name)
     src += '//Return the result'
     src += 'if(result) { Py_RETURN_TRUE; } else { printf("Kernel reported failure\\n"); Py_RETURN_FALSE; }'
     src.unindent()
@@ -271,6 +293,15 @@ class Compiler:
   def compile_java(k, options):
     type = options.type
     args = k.get_arguments()
+    if DataType.is_floating(type):
+      buffer_type = 'FloatBuffer'
+      uniform_type = 'float'
+    elif DataType.is_integral(type):
+      buffer_type = 'IntBuffer'
+      uniform_type = 'int'
+    else:
+      raise Exception('Unsupported data type (%s)'%(type))
+    #JNI header file
     src = Formatter()
     src.section('VecPy generated entry point: Java')
     #Includes
@@ -278,23 +309,27 @@ class Compiler:
     src += '#include <jni.h>'
     src += ''
     #Wrapper for the core function
+    name_str = 'VecPy_%s'%k.name
+    if options.java_package is not None:
+      name_str = '%s_%s'%(options.java_package, name_str)
+      name_str = '_'.join(name_str.split('.'))
+    arg_str = ', '.join('j%s vp_%s'%(uniform_type if arg.is_uniform else 'object', arg.name) for arg in args)
     src += '//Wrapper for the core function'
-    arg_str = ', '.join('jobject buf_%s'%(arg.name) for arg in args)
-    src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s_%s(JNIEnv* env, jclass cls, %s) {'%('VecPy', k.name, arg_str)
+    src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s(JNIEnv* env, jclass cls, %s) {'%(name_str, arg_str)
     src.indent()
-    buffer_type = 'FloatBuffer'
     src += '//Make sure the buffers are directly allocated'
     src += 'jclass %s = env->FindClass("java/nio/%s");'%(buffer_type, buffer_type)
     src += 'jmethodID isDirect = env->GetMethodID(%s, "isDirect", "()Z");'%(buffer_type)
-    for arg in args:
-      src += 'if(!env->CallBooleanMethod(buf_%s, isDirect)) {'%(arg.name)
+    for arg in k.get_arguments(uniform=False):
+      src += 'if(!env->CallBooleanMethod(vp_%s, isDirect)) {'%(arg.name)
       src.indent()
       src += 'printf("Buffer not direct (%s)\\n");'%(arg.name)
       src += 'return false;'
       src.unindent()
       src += '}'
+    #Get the number of elements from the length of the first buffer
     src += '//Number of elements to process'
-    src += 'jlong N = env->GetDirectBufferCapacity(buf_%s);'%(args[0].name)
+    src += 'jlong N = env->GetDirectBufferCapacity(vp_%s);'%(k.get_arguments(uniform=False)[0].name)
     src += 'if(N == -1) {'
     src.indent()
     src += 'printf("JVM doesn\'t support direct buffers\\n");'
@@ -302,8 +337,8 @@ class Compiler:
     src.unindent()
     src += '}'
     src += '//Check length for all buffers'
-    for arg in args:
-      src += 'if(env->GetDirectBufferCapacity(buf_%s) != N) { '%(arg.name)
+    for arg in k.get_arguments(uniform=False):
+      src += 'if(env->GetDirectBufferCapacity(vp_%s) != N) { '%(arg.name)
       src.indent()
       src += 'printf("Java buffer sizes don\'t match (%s)\\n");'%(arg.name)
       src += 'return false;'
@@ -312,9 +347,12 @@ class Compiler:
     src += '//Extract input arrays from buffers'
     src += 'KernelArgs args;'
     for arg in args:
-      src += 'args.%s = (%s*)env->GetDirectBufferAddress(buf_%s);'%(arg.name, type, arg.name)
+      if arg.is_uniform:
+        src += 'args.%s = vp_%s;'%(arg.name, arg.name)
+      else:
+        src += 'args.%s = (%s*)env->GetDirectBufferAddress(vp_%s);'%(arg.name, type, arg.name)
     src += 'args.N = N;'
-    for arg in args:
+    for arg in k.get_arguments(uniform=False):
       src += 'if(args.%s == NULL) {'%(arg.name)
       src.indent()
       src += 'printf("Error retrieving Java buffer (%s)\\n");'%(arg.name)
@@ -330,7 +368,36 @@ class Compiler:
     file_name = Compiler.get_java_file(k)
     with open(file_name, 'w') as file:
       file.write(src.get_code())
-    #print('Saved to file: %s'%(file_name))
+    #VecPy API for java
+    src = Formatter()
+    src.section('VecPy generated API')
+    #Package
+    if options.java_package is not None:
+      src += 'package %s;'%(options.java_package)
+    #Imports
+    src += 'import java.nio.*;'
+    src += ''
+    #VecPy class
+    arg_str = ', '.join('%s %s'%(uniform_type if arg.is_uniform else buffer_type, arg.name) for arg in args)
+    src += 'public class VecPy {'
+    src.indent()
+    #Helper function to allocate a direct buffer
+    src += '//Helper function to allocate a direct buffer'
+    src += 'public static %s get%s(int N) {'%(buffer_type, buffer_type)
+    src.indent()
+    src += 'return ByteBuffer.allocateDirect(N * 4).order(ByteOrder.nativeOrder()).as%s();'%(buffer_type)
+    src.unindent()
+    src += '}'
+    #JNI wrapper
+    src += '//JNI wrapper'
+    src += 'public static native boolean %s(%s);'%(k.name, arg_str)
+    src.unindent()
+    src += '}'
+    src += ''
+    #Save code to file
+    file_name = 'VecPy.java'
+    with open(file_name, 'w') as file:
+      file.write(src.get_code())
 
   #Generates the kernel
   def compile_kernel(k, options):
@@ -341,7 +408,7 @@ class Compiler:
     src += 'struct KernelArgs {'
     src.indent()
     for arg in k.get_arguments():
-      src += '%s* %s;'%(options.type, arg.name)
+      src += '%s%s %s;'%(options.type, '*' if not arg.is_uniform else '', arg.name)
     src += 'unsigned int N;'
     src.unindent()
     src += '};'

@@ -32,21 +32,22 @@ class Parser:
     self.docstring = None
 
   #Adds an argument to the kernel
-  def add_argument(self, name):
-    return self.kernel.add_variable(kernel.Variable(name, True, False, False, None))
+  def add_argument(self, name, is_uniform):
+    return self.kernel.add_variable(kernel.Variable(name, True, is_uniform, False, False, None))
 
   #Adds a variable to the kernel if it hasn't already been defined
   def add_variable(self, name, is_mask=False):
     var = self.kernel.get_variable(name)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(name, False, name is None, is_mask, None))
+      is_temp = name is None
+      var = self.kernel.add_variable(kernel.Variable(name, False, False, is_temp, is_mask, None))
     return var
 
   #Adds a literal to the kernel if it hasn't already been defined
   def add_literal(self, value, suffix=None):
     var = self.kernel.get_literal(value)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(None, False, False, False, value))
+      var = self.kernel.add_variable(kernel.Variable(None, False, False, False, False, value))
       if suffix is not None:
         var.name += '_' + suffix
     return var
@@ -338,14 +339,19 @@ class Parser:
     block.add(ifelse)
 
   #Parses a single assignment
-  def assign_single(self, block, src, dst, multi=False):
+  def assign_single(self, block, src, dst, multi=False, src_variable=None):
     #Parse the expression and get the intermediate variable
     #Skips intermediate storage variable (can't infer type)
     #expr = self.expression(block, src, var if not multi else None)
     #Generates an intermediate storage variable (can infer type)
-    expr = self.expression(block, src, None)
+    if src_variable is None:
+      expr = self.expression(block, src, None)
+    else:
+      expr = src_variable
     #Make or get the destination variable
     var = self.add_variable(dst.id, is_mask=(expr.is_mask))
+    if var.is_uniform:
+      raise Exception('Can\'t modify a uniform variable')
     #Set the output flag is the variable is a kernel argument
     if var.is_arg:
       var.output = True
@@ -366,12 +372,14 @@ class Parser:
   def assign(self, block, stmt):
     #Evaluate the assignment(s)
     value = stmt.value
+    value_variable = None
     for i in range(len(stmt.targets)):
       target = stmt.targets[i]
       if isinstance(target, ast.Name):
-        result = self.assign_single(block, value, target)
+        result = self.assign_single(block, value, target, src_variable=value_variable)
         if result is not None:
           block.add(result)
+          value_variable = result.expr
       elif isinstance(target, ast.Tuple):
         #Save intermediate results
         results = []
@@ -499,12 +507,26 @@ class Parser:
 
       #Get the function's arguments
       for arg in node.args.args:
-        parser.add_argument(arg.arg)
+        is_uniform = False
+        if arg.annotation is not None:
+          if isinstance(arg.annotation, ast.Str):
+            str = arg.annotation.s
+            if str == 'uniform':
+              is_uniform = True
+            else:
+              raise Exception('Unsupported annotation (%s)'%(str))
+          else:
+            raise Exception('Annotation must be a string')
+        parser.add_argument(arg.arg, is_uniform)
 
       #The body!
       for stmt in node.body:
         parser.statement(parser.kernel.block, stmt)
 
+      #Make sure there is at least one valid kernel argument
+      if len(parser.kernel.get_arguments(uniform=False)) == 0:
+        raise Exception('Kernel must take at least one non-uniform argument')
+      
       #The source code has been parsed, return the abstract kernel
       return parser.kernel
 

@@ -43,17 +43,24 @@ class Binding:
 
 #Compile time options
 class Options:
-  def __init__(self, arch, type, bindings=(Binding.all,), threads=None):
+  def __init__(self, arch, type, bindings=(Binding.all,), threads=None, java_package='vecpy'):
+    #Target architecture
     self.arch = arch
+    #Kernel data type
     self.type = type
+    #Language API bindings
     self.bindings = bindings
+    #Number of threads to spawn
     self.threads = threads
+    #Java package name
+    self.java_package = java_package
   def show(self):
     print('=' * 40)
     print('Architecture:      ' + self.arch['name'])
     print('Data Type:         ' + self.type)
     print('Language Bindings: ' + str(self.bindings))
     print('Threads:           ' + str(self.threads))
+    print('Java Package:      ' + str(self.java_package))
     print('=' * 40)
 
 #Indent amount

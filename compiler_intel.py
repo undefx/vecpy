@@ -45,6 +45,11 @@ class Compiler_Intel:
     src += '//Setup'
     trans.setup()
     src += ''
+    #Uniforms
+    src += '//Uniforms'
+    for arg in k.get_arguments(uniform=True):
+      trans.set('const %s %s'%(vecType, arg.name), 'args->%s'%(arg.name))
+    src += ''
     #Literals
     src += '//Literals'
     for var in k.get_literals():
@@ -52,7 +57,7 @@ class Compiler_Intel:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
-    src += '%s %s;'%(vecType, ', '.join([var.name for var in k.get_variables()]))
+    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables() if not var.is_uniform))
     src += ''
     #Begin input loop
     src += '//Loop over input'
@@ -62,7 +67,7 @@ class Compiler_Intel:
     src.indent()
     #Inputs
     src += '//Inputs'
-    for arg in k.get_arguments(input=True):
+    for arg in k.get_arguments(input=True, uniform=False):
       trans.load(arg.name, '&args->%s[index]'%(arg.name))
     src += ''
     #Core kernel logic

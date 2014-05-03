@@ -22,6 +22,11 @@ class Compiler_Generic:
     src += 'static void %s_scalar(KernelArgs* args) {'%(k.name)
     src += ''
     src.indent()
+    #Uniforms
+    src += '//Uniforms'
+    for arg in k.get_arguments(uniform=True):
+      src += 'const %s %s = args->%s;'%(options.type, arg.name, arg.name)
+    src += ''
     #Literals
     src += '//Literals'
     for var in k.get_literals():
@@ -29,13 +34,14 @@ class Compiler_Generic:
       src += 'const %s %s = %s;'%(options.type, var.name, value)
     src += ''
     #Temporary (stack) variables
-    vars = [var.name for var in k.get_variables() if not var.is_mask]
+    src += '//Stack variables (numeric)'
+    vars = [var.name for var in k.get_variables() if not var.is_mask and not var.is_uniform]
     if len(vars) != 0:
-      src += '//Stack variables (numeric)'
       src += '%s %s;'%(options.type, ', '.join(vars))
+    src += ''
+    src += '//Stack variables (boolean)'
     bools = [var.name for var in k.get_variables() if var.is_mask]
     if len(bools) != 0:
-      src += '//Stack variables (boolean)'
       src += '%s %s;'%('bool', ', '.join(bools))
     src += ''
     #Begin input loop
@@ -46,7 +52,7 @@ class Compiler_Generic:
     src.indent()
     #Inputs
     src += '//Inputs'
-    for arg in k.get_arguments(input=True):
+    for arg in k.get_arguments(input=True, uniform=False):
       src += '%s = args->%s[index];'%(arg.name, arg.name)
     src += ''
     #Core kernel logic
