@@ -32,22 +32,22 @@ class Parser:
     self.docstring = None
 
   #Adds an argument to the kernel
-  def add_argument(self, name, is_uniform):
-    return self.kernel.add_variable(kernel.Variable(name, True, is_uniform, False, False, None))
+  def add_argument(self, name, is_uniform, stride):
+    return self.kernel.add_variable(kernel.Variable(name=name, is_arg=True, is_uniform=is_uniform, stride=stride))
 
   #Adds a variable to the kernel if it hasn't already been defined
   def add_variable(self, name, is_mask=False):
     var = self.kernel.get_variable(name)
     if var is None:
       is_temp = name is None
-      var = self.kernel.add_variable(kernel.Variable(name, False, False, is_temp, is_mask, None))
+      var = self.kernel.add_variable(kernel.Variable(name=name, is_temp=is_temp, is_mask=is_mask))
     return var
 
   #Adds a literal to the kernel if it hasn't already been defined
   def add_literal(self, value, suffix=None):
     var = self.kernel.get_literal(value)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(None, False, False, False, False, value))
+      var = self.kernel.add_variable(kernel.Variable(value=value))
       if suffix is not None:
         var.name += '_' + suffix
     return var
@@ -261,6 +261,32 @@ class Parser:
     block.add(assignment)
     return var
 
+  #Parses an array element (AST Subscript)
+  def subscript(self, block, node):
+    #Check types
+    if not isinstance(node.value, ast.Name):
+      raise Exception('Only variables can be subscripted')
+    if not isinstance(node.slice, ast.Index):
+      raise Exception('Slicing not supported')
+    #Get the array and index
+    array = self.expression(block, node.value)
+    index = self.expression(block, node.slice.value)
+    #Make sure the variable is an array
+    if array.stride < 2:
+      raise Exception('Variable can\'t be subscripted (%s)'%(array.name))
+    #Check the access mode
+    if isinstance(node.ctx, ast.Load):
+      is_read=True
+    elif isinstance(node.ctx, ast.Store):
+      is_read=False
+    else:
+      raise Exception('Invalid array operation')
+    #Access the array specified index
+    var = self.add_variable(None)
+    operation = kernel.ArrayAccess(array, index, is_read)
+    assignment = kernel.Assignment(var, operation)
+    return (var, assignment)
+
   #Parses an expression (AST Expr)
   def expression(self, block, expr, var=None):
     if isinstance(expr, ast.Num):
@@ -270,7 +296,7 @@ class Parser:
       if var is None:
         raise Exception('Undefined Variable (%s)'%(expr.id))
       if var.is_arg:
-        var.input = True
+        var.is_input = True
     elif isinstance(expr, ast.BinOp):
       var = self.binop(block, expr, var)
     elif isinstance(expr, ast.UnaryOp):
@@ -283,6 +309,9 @@ class Parser:
       var = self.compare(block, expr)
     elif isinstance(expr, ast.BoolOp):
       var = self.boolop(block, expr)
+    elif isinstance(expr, ast.Subscript):
+      (var, assignment) = self.subscript(block, expr)
+      block.add(assignment)
     else:
       Parser._dump(expr, 'Unexpected Expression')
       raise Exception('Unexpected Expression (%s)'%(expr.__class__))
@@ -341,20 +370,25 @@ class Parser:
   #Parses a single assignment
   def assign_single(self, block, src, dst, multi=False, src_variable=None):
     #Parse the expression and get the intermediate variable
-    #Skips intermediate storage variable (can't infer type)
-    #expr = self.expression(block, src, var if not multi else None)
-    #Generates an intermediate storage variable (can infer type)
     if src_variable is None:
+      #Generates an intermediate storage variable
       expr = self.expression(block, src, None)
     else:
+      #Reuses an existing variable
       expr = src_variable
     #Make or get the destination variable
-    var = self.add_variable(dst.id, is_mask=(expr.is_mask))
+    asst = None
+    if isinstance(dst, ast.Name):
+      var = self.add_variable(dst.id, is_mask=(expr.is_mask))
+    elif isinstance(dst, ast.Subscript):
+      (var, asst) = self.subscript(block, dst)
+    else:
+      raise Exception('Unexpected assignment destination (%s)'%(dst.__class__))
+    #Set the output flag is the variable is a kernel argument
     if var.is_uniform:
       raise Exception('Can\'t modify a uniform variable')
-    #Set the output flag is the variable is a kernel argument
     if var.is_arg:
-      var.output = True
+      var.is_output = True
     #Don't generate a self assignment
     if var != expr:
       #Create a temporary variable if this is a multi-assignment
@@ -364,7 +398,10 @@ class Parser:
         block.add(assignment)
         expr = temp
       #The final assignment will be added to the kernel later
-      return kernel.Assignment(var, expr, vector_only=True, mask=block.mask)
+      result = [kernel.Assignment(var, expr, vector_only=True, mask=block.mask)]
+      if asst is not None:
+        result.append(asst)
+      return result
     else:
       return None
 
@@ -375,12 +412,7 @@ class Parser:
     value_variable = None
     for i in range(len(stmt.targets)):
       target = stmt.targets[i]
-      if isinstance(target, ast.Name):
-        result = self.assign_single(block, value, target, src_variable=value_variable)
-        if result is not None:
-          block.add(result)
-          value_variable = result.expr
-      elif isinstance(target, ast.Tuple):
+      if isinstance(target, ast.Tuple):
         #Save intermediate results
         results = []
         #Evaluate individual assignments
@@ -390,7 +422,10 @@ class Parser:
         for result in results:
           block.add(result)
       else:
-        raise Exception('Unexpected Assignment (%s)'%(target.__class__))
+        result = self.assign_single(block, value, target, src_variable=value_variable)
+        if result is not None:
+          block.add(result)
+          value_variable = result[-1].expr
 
   #Parses an augmenting assignment (AST AugAssign)
   def augassign(self, block, stmt):
@@ -439,21 +474,27 @@ class Parser:
     #Add a comment
     self.add_comment(block, stmt)
     #Parse the statement
-    if isinstance(stmt, ast.Assign):
-      self.assign(block, stmt)
-    elif isinstance(stmt, ast.Return):
-      self.return_(block, stmt)
-    elif isinstance(stmt, ast.Expr):
-      self.docstring_(block, stmt)
-    elif isinstance(stmt, ast.If):
-      self.if_(block, stmt)
-    elif isinstance(stmt, ast.While):
-      self.while_(block, stmt)
-    elif isinstance(stmt, ast.AugAssign):
-      self.augassign(block, stmt)
-    else:
-      Parser._dump(stmt, 'Unexpected Statement')
-      raise Exception('Unexpected Statement (%s)'%(stmt.__class__))
+    try:
+      if isinstance(stmt, ast.Assign):
+        self.assign(block, stmt)
+      elif isinstance(stmt, ast.Return):
+        self.return_(block, stmt)
+      elif isinstance(stmt, ast.Expr):
+        self.docstring_(block, stmt)
+      elif isinstance(stmt, ast.If):
+        self.if_(block, stmt)
+      elif isinstance(stmt, ast.While):
+        self.while_(block, stmt)
+      elif isinstance(stmt, ast.AugAssign):
+        self.augassign(block, stmt)
+      else:
+        Parser._dump(stmt, 'Unexpected Statement')
+        raise Exception('Unexpected Statement (%s)'%(stmt.__class__))
+    except:
+      line = stmt.lineno
+      src = self.source.split('\n')[line - 1].strip()
+      print('Line %d: %s'%(line, src))
+      raise
 
   #===========================================================
   # Public interface
@@ -494,38 +535,43 @@ class Parser:
         continue
 
       #Make sure there are no decorators
-      #todo: clever use of decorators...
-      #todo: check node.returns
       if len(node.decorator_list) > 0:
         raise Exception('Decorators not supported')
 
-      #Get the function name
-      print("Found '%s' on line %d!"%(kernel_name, node.lineno))
+      ##Get the function name
+      #print("Found '%s' on line %d!"%(kernel_name, node.lineno))
 
       #Make a parser for this kernel
       parser = Parser(kernel_name, source_code)
 
       #Get the function's arguments
       for arg in node.args.args:
+        name = arg.arg
         is_uniform = False
+        stride = 1
         if arg.annotation is not None:
-          if isinstance(arg.annotation, ast.Str):
-            str = arg.annotation.s
-            if str == 'uniform':
+          ann = arg.annotation
+          if isinstance(ann, ast.Str):
+            label = ann.s
+            if label == 'uniform':
               is_uniform = True
             else:
               raise Exception('Unsupported annotation (%s)'%(str))
+          elif isinstance(ann, ast.Num):
+            stride = ann.n
+            if stride <= 0:
+              raise Exception('Stride must be positive')
           else:
-            raise Exception('Annotation must be a string')
-        parser.add_argument(arg.arg, is_uniform)
+            raise Exception('Unsupported annotation (%s)'%(ann.__class__))
+        parser.add_argument(name, is_uniform, stride)
 
       #The body!
       for stmt in node.body:
         parser.statement(parser.kernel.block, stmt)
 
       #Make sure there is at least one valid kernel argument
-      if len(parser.kernel.get_arguments(uniform=False)) == 0:
-        raise Exception('Kernel must take at least one non-uniform argument')
+      if len(parser.kernel.get_arguments(uniform=False, array=False)) == 0:
+        raise Exception('Kernel must take at least one non-uniform, non-array argument')
       
       #The source code has been parsed, return the abstract kernel
       return parser.kernel

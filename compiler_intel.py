@@ -57,7 +57,10 @@ class Compiler_Intel:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
-    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables() if not var.is_uniform))
+    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables(uniform=False, array=False)))
+    vars = ['*%s'%(var.name) for var in k.get_variables(uniform=False, array=True)]
+    if len(vars) > 0:
+      src += '%s %s;'%(options.type, ', '.join(vars))
     src += ''
     #Begin input loop
     src += '//Loop over input'
@@ -68,7 +71,11 @@ class Compiler_Intel:
     #Inputs
     src += '//Inputs'
     for arg in k.get_arguments(input=True, uniform=False):
-      trans.load(arg.name, '&args->%s[index]'%(arg.name))
+      if arg.stride > 1:
+        index = 'index * %d'%(arg.stride)
+        src += '%s = &args->%s[%s];'%(arg.name, arg.name, index)
+      else:
+        trans.load(arg.name, '&args->%s[index]'%(arg.name))
     src += ''
     #Core kernel logic
     src += '//Begin kernel logic'
@@ -141,6 +148,15 @@ class Compiler_Intel:
             trans.operations[op](var, left, right)
           else:
             raise Exception('Unknown comparison operator (%s)'%(op))
+        elif isinstance(stmt.expr, ArrayAccess):
+          var = stmt.var.name
+          array = stmt.expr.array.name
+          index = stmt.expr.index.name
+          stride = stmt.expr.array.stride
+          if stmt.expr.is_read:
+            trans.array_read(var, array, index, stride)
+          else:
+            trans.array_write(var, array, index, stride)
         else:
           raise Exception('Bad assignment')
       elif isinstance(stmt, IfElse):
@@ -666,6 +682,19 @@ class Compiler_Intel:
           mask = 'MASK_LANE_%d'%(i)
           input = '_mm_srli_epi32(%s, _mm_extract_epi32(%s, %d))'%(left, right, i)
           self.src += '%s = _mm_or_si128(_mm_and_si128(%s, %s), _mm_andnot_si128(%s, %s));'%(output, mask, input, mask, output)
+    def array_read(self, *args):
+      (output, array, index, stride) = args
+      for i in range(self.size):
+        mask = 'MASK_LANE_%d'%(i)
+        input = '_mm_set1_epi32(%s[%d + _mm_extract_epi32(%s, %d)])'%(array, stride * i, index, i)
+        self.src += '%s = _mm_or_si128(_mm_and_si128(%s, %s), _mm_andnot_si128(%s, %s));'%(output, mask, input, mask, output)
+    def array_write(self, *args):
+      (input, array, index, stride) = args
+      for i in range(self.size):
+        self.src += '%s[%d + _mm_extract_epi32(%s, %d)] = _mm_extract_epi32(%s, %d);'%(array, stride * i, index, i, input, i)
+        #self.src += '#include <stdio.h>'
+        #self.src += 'printf("%s[%d]=%%d\\n", _mm_extract_epi32(%s, %d));'%(index, i, index, i)
+        #self.src += 'printf("%s[%s-%d]=%%d\\n", _mm_extract_epi32(%s[_mm_extract_epi32(%s, %d)], %d));'%(array, index, i, array, index, i, i)
 
   ################################################################################
   # Translates kernel operations into vectorized C++ code (AVX2, 32-bit float)

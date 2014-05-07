@@ -7,7 +7,7 @@ The Kernel is a set of operations to be performed on a set of data.
 class Variable:
   #A unique variable identifier
   index = 0
-  def __init__(self, name, is_arg, is_uniform, is_temp, is_mask, value):
+  def __init__(self, name=None, is_arg=False, is_uniform=False, is_temp=False, is_mask=False, stride=1, value=None):
     if name is None:
       if value is None:
         if is_mask:
@@ -27,14 +27,16 @@ class Variable:
     self.is_temp = is_temp
     #Whether or not this variable is a bit mask
     self.is_mask = is_mask
+    #The stride of this array variable
+    self.stride = stride
     #The value of this literal
     self.value = value
     #A unique identifier for this variable
     self.index = Variable.index
     #Whether or not this argument is read from
-    self.input = False
+    self.is_input = False
     #Whether or not this argument is written to
-    self.output = False
+    self.is_output = False
     #Increment variable identifier
     Variable.index += 1
 
@@ -153,6 +155,16 @@ class ComparisonOperation:
     #The right-side variable
     self.right = right
 
+#Represents reading an array element
+class ArrayAccess:
+  def __init__(self, array, index, is_read):
+    #The array
+    self.array = array
+    #The index
+    self.index = index
+    #Whether or not data is being read or written
+    self.is_read = is_read
+
 #Represents a single statement
 class Statement:
   pass
@@ -166,6 +178,10 @@ class Block:
     self.mask = mask
   #Appends a statement to the code block
   def add(self, stmt):
+    if isinstance(stmt, list):
+      for s in stmt:
+        self.add(s)
+      return
     #Sanity checks
     if not isinstance(stmt, Statement):
       raise Exception('Can\'t add that (%s) to the code block'%(stmt.__class__))
@@ -258,15 +274,15 @@ class Kernel:
     self.docstring = docstring
 
   #Returns a list of arguments sorted by order of appearance
-  def get_arguments(self, input=None, output=None, uniform=None):
+  def get_arguments(self, input=None, output=None, uniform=None, array=None):
     args = sorted(list(self.arguments.values()), key=lambda arg: arg.index)
-    return [arg for arg in args if (input is None or input == arg.input) and (output is None or output == arg.output) and (uniform is None or uniform == arg.is_uniform)]
+    return [arg for arg in args if (input is None or input == arg.is_input) and (output is None or output == arg.is_output) and (uniform is None or uniform == arg.is_uniform) and (array is None or array == (arg.stride > 1))]
 
   #Returns a list of literals sorted by value
   def get_literals(self):
     return sorted(list(self.literals.values()), key=lambda lit: lit.value)
 
   #Returns a list of all variables sorted by order of appearance
-  def get_variables(self):
+  def get_variables(self, mask=None, uniform=None, array=None):
     vars = sorted(list(self.variables.values()), key=lambda var: var.index)
-    return [var for var in vars if var.value is None]
+    return [var for var in vars if var.value is None and (mask is None or mask == var.is_mask)  and (uniform is None or uniform == var.is_uniform) and (array is None or array == (var.stride > 1))]

@@ -99,7 +99,10 @@ class Compiler:
       if arg.is_uniform:
         src += 'threadArgs[t].%s = args->%s;'%(arg.name, arg.name)
       else:
-        src += 'threadArgs[t].%s = &args->%s[offset];'%(arg.name, arg.name)
+        offset = 'offset'
+        if arg.stride > 1:
+          offset = '%s * %d'%(offset, arg.stride)
+        src += 'threadArgs[t].%s = &args->%s[%s];'%(arg.name, arg.name, offset)
     src += 'threadArgs[t].N = elementsPerThread;'
     src += 'offset += elementsPerThread;'
     src += 'pthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);'
@@ -123,7 +126,10 @@ class Compiler:
       if arg.is_uniform:
         src += 'lastArgs.%s = args->%s;'%(arg.name, arg.name)
       else:
-        src += 'lastArgs.%s = &args->%s[offset];'%(arg.name, arg.name)
+        offset = 'offset'
+        if arg.stride > 1:
+          offset = '%s * %d'%(offset, arg.stride)
+        src += 'lastArgs.%s = &args->%s[%s];'%(arg.name, arg.name, offset)
     src += 'lastArgs.N = args->N - offset;'
     src += '%s_scalar(&lastArgs);'%(k.name)
     src.unindent()
@@ -211,7 +217,7 @@ class Compiler:
     src += '}'
     src += '//Get Python buffers from Python objects'
     for arg in k.get_arguments(uniform=False):
-      src += 'if(PyObject_GetBuffer(obj_%s, &vp_%s, %s) != 0) {'%(arg.name, arg.name, 'PyBUF_WRITABLE' if arg.output else '0')
+      src += 'if(PyObject_GetBuffer(obj_%s, &vp_%s, %s) != 0) {'%(arg.name, arg.name, 'PyBUF_WRITABLE' if arg.is_output else '0')
       src.indent()
       src += 'printf("Error retrieving Python buffer (%s)\\n");'%(arg.name)
       src += 'return NULL;'
@@ -219,10 +225,13 @@ class Compiler:
       src += '}'
     #Get the number of elements from the length of the first buffer
     src += '//Number of elements to process'
-    src += 'int N = vp_%s.len / sizeof(%s);'%(k.get_arguments(uniform=False)[0].name, type)
+    src += 'int N = vp_%s.len / sizeof(%s);'%(k.get_arguments(uniform=False, array=False)[0].name, type)
     src += '//Check length for all buffers'
     for arg in k.get_arguments(uniform=False):
-      src += 'if(vp_%s.len / sizeof(%s) != N) {'%(arg.name, type)
+      num = 'N'
+      if arg.stride > 1:
+        num = '%s * %d'%(num, arg.stride)
+      src += 'if(vp_%s.len / sizeof(%s) != %s) {'%(arg.name, type, num)
       src.indent()
       src += 'printf("Python buffer sizes don\'t match (%s)\\n");'%(arg.name)
       src += 'return NULL;'
@@ -329,7 +338,7 @@ class Compiler:
       src += '}'
     #Get the number of elements from the length of the first buffer
     src += '//Number of elements to process'
-    src += 'jlong N = env->GetDirectBufferCapacity(vp_%s);'%(k.get_arguments(uniform=False)[0].name)
+    src += 'jlong N = env->GetDirectBufferCapacity(vp_%s);'%(k.get_arguments(uniform=False, array=False)[0].name)
     src += 'if(N == -1) {'
     src.indent()
     src += 'printf("JVM doesn\'t support direct buffers\\n");'
@@ -338,7 +347,10 @@ class Compiler:
     src += '}'
     src += '//Check length for all buffers'
     for arg in k.get_arguments(uniform=False):
-      src += 'if(env->GetDirectBufferCapacity(vp_%s) != N) { '%(arg.name)
+      num = 'N'
+      if arg.stride > 1:
+        num = '%s * %d'%(num, arg.stride)
+      src += 'if(env->GetDirectBufferCapacity(vp_%s) != %s) { '%(arg.name, num)
       src.indent()
       src += 'printf("Java buffer sizes don\'t match (%s)\\n");'%(arg.name)
       src += 'return false;'

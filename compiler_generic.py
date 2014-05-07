@@ -35,13 +35,13 @@ class Compiler_Generic:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables (numeric)'
-    vars = [var.name for var in k.get_variables() if not var.is_mask and not var.is_uniform]
-    if len(vars) != 0:
+    vars = ['%s%s'%('*' if var.stride > 1 else '', var.name) for var in k.get_variables(mask=False, uniform=False)]
+    if len(vars) > 0:
       src += '%s %s;'%(options.type, ', '.join(vars))
     src += ''
     src += '//Stack variables (boolean)'
     bools = [var.name for var in k.get_variables() if var.is_mask]
-    if len(bools) != 0:
+    if len(bools) > 0:
       src += '%s %s;'%('bool', ', '.join(bools))
     src += ''
     #Begin input loop
@@ -53,7 +53,12 @@ class Compiler_Generic:
     #Inputs
     src += '//Inputs'
     for arg in k.get_arguments(input=True, uniform=False):
-      src += '%s = args->%s[index];'%(arg.name, arg.name)
+      addr = ''
+      index = 'index'
+      if arg.stride > 1:
+        addr = '&'
+        index = '%s * %d'%(index, arg.stride)
+      src += '%s = %sargs->%s[%s];'%(arg.name, addr, arg.name, index)
     src += ''
     #Core kernel logic
     src += '//Begin kernel logic'
@@ -146,6 +151,14 @@ class Compiler_Generic:
             src += '%s = %s %s %s;'%(var, left, op, right)
           else:
             raise Exception('Unknown operator (%s)'%(op))
+        elif isinstance(stmt.expr, ArrayAccess):
+          var = stmt.var.name
+          array = stmt.expr.array.name
+          index = stmt.expr.index.name
+          if stmt.expr.is_read:
+            src += '%s = %s[%s];'%(var, array, index)
+          else:
+            src += '%s[%s] = %s;'%(array, index, var)
         else:
           raise Exception('Bad assignment')
       elif isinstance(stmt, IfElse):
