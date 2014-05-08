@@ -1,5 +1,5 @@
-from kernel import *
-from compiler_constants import *
+from vecpy.kernel import *
+from vecpy.compiler_constants import *
 
 class Compiler_Intel:
 
@@ -8,27 +8,17 @@ class Compiler_Intel:
     src.section('Target Architecture: %s (%s)'%(options.arch['name'], options.type))
     #Set some basic parameters
     size = options.arch['size']
-    if options.type == DataType.float:
-      literal_format = '%.7ff'
-    elif options.type == DataType.uint32:
-      literal_format = '0x%08x'
-    else:
-      raise Exception('Type not supported (%s)'%(options.type))
     #Select an appropriate translator for the target architecture and data type
     if options.arch == Architecture.sse4:
-      if options.type == DataType.float:
+      if DataType.is_floating(options.type):
         trans = Compiler_Intel.SSE4_Float(src, size)
-      elif options.type == DataType.uint32:
+      else:
         trans = Compiler_Intel.SSE4_UInt32(src, size)
-      else:
-        raise Exception('Type not supported (%s)'%(options.type))
     elif options.arch == Architecture.avx2:
-      if options.type == DataType.float:
+      if DataType.is_floating(options.type):
         trans = Compiler_Intel.AVX2_Float(src, size)
-      elif options.type == DataType.uint32:
-        trans = Compiler_Intel.AVX2_UInt32(src, size)
       else:
-        raise Exception('Type not supported (%s)'%(options.type))
+        trans = Compiler_Intel.AVX2_UInt32(src, size)
     else:
       raise Exception('Architecture not supported (%s)'%(options.arch['name']))
     vecType = trans.type
@@ -53,7 +43,11 @@ class Compiler_Intel:
     #Literals
     src += '//Literals'
     for var in k.get_literals():
-      trans.set('const %s %s'%(vecType, var.name), literal_format%(var.value))
+      if DataType.is_floating(options.type):
+        value = '%sf'%(str(var.value))
+      else:
+        value = '0x%08x'%(var.value)
+      trans.set('const %s %s'%(vecType, var.name), value)
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
@@ -190,6 +184,7 @@ class Compiler_Intel:
         Operator.subtract: self.sub,
         Operator.multiply: self.mul,
         Operator.divide: self.div,
+        Operator.divide_int: self.floordiv,
         Operator.mod: self.mod,
         Operator.pow: self.pow,
         #Python comparison operators
@@ -304,6 +299,8 @@ class Compiler_Intel:
     def mul(self, *args):
       self.error()
     def div(self, *args):
+      self.error()
+    def floordiv(self, *args):
       self.error()
     def mod(self, *args):
       self.error()
@@ -469,6 +466,9 @@ class Compiler_Intel:
       self.vector_1_2('_mm_mul_ps', args)
     def div(self, *args):
       self.vector_1_2('_mm_div_ps', args)
+    def floordiv(self, *args):
+      self.div(*args)
+      self.floor(args[0], args[0])
     def mod(self, *args):
       self.scalar_1_2('fmod', args)
     def pow(self, *args):
@@ -653,13 +653,6 @@ class Compiler_Intel:
     def bit_not(self, *args):
       args += ('MASK_TRUE',)
       self.bit_xor(*args)
-    #Python boolean operators
-    def bool_and(self, *args):
-      self.bit_and(*args)
-    def bool_or(self, *args):
-      self.bit_or(*args)
-    def bool_not(self, *args):
-      self.bit_not(*args)
     def shift_left(self, *args):
       if len(args) == 4 and args[3]:
         #Shifting all lanes by the same constant
@@ -682,6 +675,21 @@ class Compiler_Intel:
           mask = 'MASK_LANE_%d'%(i)
           input = '_mm_srli_epi32(%s, _mm_extract_epi32(%s, %d))'%(left, right, i)
           self.src += '%s = _mm_or_si128(_mm_and_si128(%s, %s), _mm_andnot_si128(%s, %s));'%(output, mask, input, mask, output)
+    #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
+    def bool_not(self, *args):
+      self.bit_not(*args)
+    #Python intrinsics
+    def max(self, *args):
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.src += '%s = _mm_xor_si128(SIGN_BITS, _mm_max_epi32(%s, %s));'%(args[0], args[1], args[2])
+    def min(self, *args):
+      args = (args[0], '_mm_xor_si128(SIGN_BITS, %s)'%(args[1]), '_mm_xor_si128(SIGN_BITS, %s)'%(args[2]))
+      self.src += '%s = _mm_xor_si128(SIGN_BITS, _mm_min_epi32(%s, %s));'%(args[0], args[1], args[2])
+    #Experimental - array access
     def array_read(self, *args):
       (output, array, index, stride) = args
       for i in range(self.size):
@@ -692,9 +700,6 @@ class Compiler_Intel:
       (input, array, index, stride) = args
       for i in range(self.size):
         self.src += '%s[%d + _mm_extract_epi32(%s, %d)] = _mm_extract_epi32(%s, %d);'%(array, stride * i, index, i, input, i)
-        #self.src += '#include <stdio.h>'
-        #self.src += 'printf("%s[%d]=%%d\\n", _mm_extract_epi32(%s, %d));'%(index, i, index, i)
-        #self.src += 'printf("%s[%s-%d]=%%d\\n", _mm_extract_epi32(%s[_mm_extract_epi32(%s, %d)], %d));'%(array, index, i, array, index, i, i)
 
   ################################################################################
   # Translates kernel operations into vectorized C++ code (AVX2, 32-bit float)
@@ -708,13 +713,6 @@ class Compiler_Intel:
     def setup(self):
       self.src += 'const %s MASK_FALSE = _mm256_setzero_ps();'%(self.type)
       self.src += 'const %s MASK_TRUE = _mm256_cmp_ps(MASK_FALSE, MASK_FALSE, _CMP_EQ_UQ);'%(self.type)
-      #for i in range(self.size):
-      #  slots = []
-      #  for j in range(self.size):
-      #    slots.append('%ff'%(1 if i == j else 0))
-      #  slots.reverse()
-      #  lane = '_mm256_cmp_ps(MASK_FALSE, _mm256_set_ps(%s), _CMP_NEQ_UQ)'%(', '.join(slots))
-      #  self.src += 'const %s MASK_LANE_%d = %s;'%(self.type, i, lane)
     def set(self, *args):
       self.vector_1_1('_mm256_set1_ps', args)
     def load(self, *args):
@@ -733,6 +731,9 @@ class Compiler_Intel:
       self.vector_1_2('_mm256_mul_ps', args)
     def div(self, *args):
       self.vector_1_2('_mm256_div_ps', args)
+    def floordiv(self, *args):
+      self.div(*args)
+      self.floor(args[0], args[0])
     def mod(self, *args):
       self.scalar_1_2('fmod', args)
     def pow(self, *args):
@@ -784,7 +785,7 @@ class Compiler_Intel:
       self.vector_1_2('_mm256_min_ps', args)
     def round(self, *args):
       args += ('(_MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)',)
-      self.vector_1_2('_mm_round_ps', args)
+      self.vector_1_2('_mm256_round_ps', args)
     #Math functions (binary)
     def atan2(self, *args):
       self.scalar_1_2('atan2', args)
@@ -809,7 +810,7 @@ class Compiler_Intel:
       self.scalar_1_1('atanh', args)
     def ceil(self, *args):
       args += ('(_MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC)',)
-      self.vector_1_2('_mm_round_ps', args)
+      self.vector_1_2('_mm256_round_ps', args)
     def cos(self, *args):
       self.scalar_1_1('cos', args)
     def cosh(self, *args):
@@ -826,7 +827,7 @@ class Compiler_Intel:
       self.scalar_1_1('fabs', args)
     def floor(self, *args):
       args += ('(_MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC)',)
-      self.vector_1_2('_mm_round_ps', args)
+      self.vector_1_2('_mm256_round_ps', args)
     def gamma(self, *args):
       self.scalar_1_1('tgamma', args)
     def lgamma(self, *args):
@@ -851,7 +852,7 @@ class Compiler_Intel:
       self.scalar_1_1('tanh', args)
     def trunc(self, *args):
       args += ('(_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)',)
-      self.vector_1_2('_mm_round_ps', args)
+      self.vector_1_2('_mm256_round_ps', args)
 
   ################################################################################
   # Translates kernel operations into vectorized C++ code (AVX2, 32-bit uint)
@@ -925,13 +926,6 @@ class Compiler_Intel:
     def bit_not(self, *args):
       args += ('MASK_TRUE',)
       self.bit_xor(*args)
-    #Python boolean operators
-    def bool_and(self, *args):
-      self.bit_and(*args)
-    def bool_or(self, *args):
-      self.bit_or(*args)
-    def bool_not(self, *args):
-      self.bit_not(*args)
     def shift_left(self, *args):
       if len(args) == 4 and args[3]:
         #Shifting all lanes by the same constant
@@ -946,3 +940,17 @@ class Compiler_Intel:
       else:
         #Shift each lane separately
         self.vector_1_2('_mm256_srlv_epi32', args[0:3])
+    #Python boolean operators
+    def bool_and(self, *args):
+      self.bit_and(*args)
+    def bool_or(self, *args):
+      self.bit_or(*args)
+    def bool_not(self, *args):
+      self.bit_not(*args)
+    #Python intrinsics
+    def max(self, *args):
+      args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
+      self.src += '%s = _mm256_xor_si256(SIGN_BITS, _mm256_max_epi32(%s, %s));'%(args[0], args[1], args[2])
+    def min(self, *args):
+      args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
+      self.src += '%s = _mm256_xor_si256(SIGN_BITS, _mm256_min_epi32(%s, %s));'%(args[0], args[1], args[2])

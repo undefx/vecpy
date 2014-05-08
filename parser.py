@@ -11,10 +11,10 @@ creates a Kernel object.
 import ast
 #Inspect live objects
 import inspect
-#Language-independent kernel
-import kernel
 #Math constants
 import math
+#Language-independent kernel
+from vecpy.kernel import *
 
 #===========================================================
 # Parser class
@@ -25,7 +25,7 @@ class Parser:
   #Parser constructor
   def __init__(self, name, source):
     #Initializes the kernel
-    self.kernel = kernel.Kernel(name)
+    self.kernel = Kernel(name)
     #The source code to be parsed
     self.source = source
     #The docstring of the kernel function
@@ -33,28 +33,28 @@ class Parser:
 
   #Adds an argument to the kernel
   def add_argument(self, name, is_uniform, stride):
-    return self.kernel.add_variable(kernel.Variable(name=name, is_arg=True, is_uniform=is_uniform, stride=stride))
+    return self.kernel.add_variable(Variable(name=name, is_arg=True, is_uniform=is_uniform, stride=stride))
 
   #Adds a variable to the kernel if it hasn't already been defined
   def add_variable(self, name, is_mask=False):
     var = self.kernel.get_variable(name)
     if var is None:
       is_temp = name is None
-      var = self.kernel.add_variable(kernel.Variable(name=name, is_temp=is_temp, is_mask=is_mask))
+      var = self.kernel.add_variable(Variable(name=name, is_temp=is_temp, is_mask=is_mask))
     return var
 
   #Adds a literal to the kernel if it hasn't already been defined
   def add_literal(self, value, suffix=None):
     var = self.kernel.get_literal(value)
     if var is None:
-      var = self.kernel.add_variable(kernel.Variable(value=value))
+      var = self.kernel.add_variable(Variable(value=value))
       if suffix is not None:
         var.name += '_' + suffix
     return var
 
   #Adds this (Python source) line as a (C++ source) comment
   def add_comment(self, block, src):
-    comment = kernel.Comment(self.source.split('\n')[src.lineno - 1].strip())
+    comment = Comment(self.source.split('\n')[src.lineno - 1].strip())
     block.add(comment)
 
   #todo: debugging
@@ -68,31 +68,33 @@ class Parser:
     left = self.expression(block, node.left)
     right = self.expression(block, node.right)
     if isinstance(node.op, ast.Add):
-      op = kernel.Operator.add
+      op = Operator.add
     elif isinstance(node.op, ast.Sub):
-      op = kernel.Operator.subtract
+      op = Operator.subtract
     elif isinstance(node.op, ast.Mult):
-      op = kernel.Operator.multiply
+      op = Operator.multiply
     elif isinstance(node.op, ast.Div):
-      op = kernel.Operator.divide
+      op = Operator.divide
+    elif isinstance(node.op, ast.FloorDiv):
+      op = Operator.divide_int
     elif isinstance(node.op, ast.Mod):
-      op = kernel.Operator.mod
+      op = Operator.mod
     elif isinstance(node.op, ast.Pow):
-      op = kernel.Operator.pow
+      op = Operator.pow
     elif isinstance(node.op, ast.BitAnd):
-      op = kernel.Operator.bit_and
+      op = Operator.bit_and
     elif isinstance(node.op, ast.BitOr):
-      op = kernel.Operator.bit_or
+      op = Operator.bit_or
     elif isinstance(node.op, ast.BitXor):
-      op = kernel.Operator.bit_xor
+      op = Operator.bit_xor
     elif isinstance(node.op, ast.LShift):
-      op = kernel.Operator.shift_left
+      op = Operator.shift_left
     elif isinstance(node.op, ast.RShift):
-      op = kernel.Operator.shift_right
+      op = Operator.shift_right
     else:
       raise Exception('Unexpected BinOp (%s)'%(node.op.__class__))
-    operation = kernel.BinaryOperation(left, op, right)
-    assignment = kernel.Assignment(var, operation)
+    operation = BinaryOperation(left, op, right)
+    assignment = Assignment(var, operation)
     block.add(assignment)
     return var
 
@@ -110,8 +112,8 @@ class Parser:
         #It's an expression, subtract from zero (faster than multiplying by -1)
         var = self.add_variable(None)
         zero = self.add_literal(0, 'ZERO')
-        operation = kernel.BinaryOperation(zero, kernel.Operator.subtract, operand)
-        assignment = kernel.Assignment(var, operation)
+        operation = BinaryOperation(zero, Operator.subtract, operand)
+        assignment = Assignment(var, operation)
         block.add(assignment)
     elif isinstance(node.op, ast.Invert):
       #Make sure it's numeric
@@ -119,8 +121,8 @@ class Parser:
         raise Exception('Unary invert requires a numeric operand')
       #Bit-flip
       var = self.add_variable(None)
-      operation = kernel.UnaryOperation(kernel.Operator.bit_not, operand)
-      assignment = kernel.Assignment(var, operation)
+      operation = UnaryOperation(Operator.bit_not, operand)
+      assignment = Assignment(var, operation)
       block.add(assignment)
     elif isinstance(node.op, ast.Not):
       #Make sure it's boolean
@@ -128,8 +130,8 @@ class Parser:
         raise Exception('Unary not requires a boolean operand')
       #Invert the mask
       var = self.add_variable(None, is_mask=True)
-      operation = kernel.UnaryOperation(kernel.Operator.bool_not, operand)
-      assignment = kernel.Assignment(var, operation)
+      operation = UnaryOperation(Operator.bool_not, operand)
+      assignment = Assignment(var, operation)
       block.add(assignment)
     else:
       raise Exception('Unexpected UnaryOp (%s)'%(node.op.__class__))
@@ -138,17 +140,17 @@ class Parser:
   #Parses a comparison operator (AST CmpOp)
   def cmpop(self, op):
     if isinstance(op, ast.Eq):
-      return kernel.Operator.eq
+      return Operator.eq
     elif isinstance(op, ast.NotEq):
-      return kernel.Operator.ne
+      return Operator.ne
     elif isinstance(op, ast.Lt):
-      return kernel.Operator.lt
+      return Operator.lt
     elif isinstance(op, ast.LtE):
-      return kernel.Operator.le
+      return Operator.le
     elif isinstance(op, ast.Gt):
-      return kernel.Operator.gt
+      return Operator.gt
     elif isinstance(op, ast.GtE):
-      return kernel.Operator.ge
+      return Operator.ge
     else:
       raise Exception('Unexpected CmpOp (%s)'%(op.__class__))
   
@@ -171,40 +173,40 @@ class Parser:
     #Find the module that contains the function
     if mod == '__main__':
       #Calls to intrinsic functions
-      cls = kernel.Intrinsic
+      cls = Intrinsic
     elif mod == 'math':
       #Calls to math functions
-      cls = kernel.Math
+      cls = Math
     else:
       #Other calls aren't supported
       raise Exception('Call not supported (module %s)'%(mod))
     #Build the call
     if func in cls.binary_functions and len(args) == 2:
-      operation = kernel.BinaryOperation(args[0], func, args[1])
+      operation = BinaryOperation(args[0], func, args[1])
     elif func in cls.unary_functions and len(args) == 1:
-      operation = kernel.UnaryOperation(func, args[0])
+      operation = UnaryOperation(func, args[0])
     #Emulated functions
     elif mod == 'math' and func == 'degrees' and len(args) == 1:
       r2d = self.add_literal(180.0 / math.pi, 'R2D')
-      operation = kernel.BinaryOperation(args[0], '*', r2d)
+      operation = BinaryOperation(args[0], '*', r2d)
     elif mod == 'math' and func == 'radians' and len(args) == 1:
       d2r = self.add_literal(math.pi / 180.0, 'D2R')
-      operation = kernel.BinaryOperation(args[0], '*', d2r)
+      operation = BinaryOperation(args[0], '*', d2r)
     elif mod == 'math' and func == 'log' and len(args) == 2:
       var1 = self.add_variable(None)
-      op1 = kernel.UnaryOperation(func, args[0])
-      asst1 = kernel.Assignment(var1, op1)
+      op1 = UnaryOperation(func, args[0])
+      asst1 = Assignment(var1, op1)
       block.add(asst1)
       var2 = self.add_variable(None)
-      op2 = kernel.UnaryOperation(func, args[1])
-      asst2 = kernel.Assignment(var2, op2)
+      op2 = UnaryOperation(func, args[1])
+      asst2 = Assignment(var2, op2)
       block.add(asst2)
-      operation = kernel.BinaryOperation(var1, '/', var2)
+      operation = BinaryOperation(var1, '/', var2)
     #Unknown function
     else:
       raise Exception('Call not supported or invalid arguments (%s.%s)'%(mod, func))
     #Make the assignment and return the result
-    assignment = kernel.Assignment(var, operation)
+    assignment = Assignment(var, operation)
     block.add(assignment)
     return var
 
@@ -237,8 +239,8 @@ class Parser:
     #Create a temporary variable to store the result of the comparison
     if var is None:
       var = self.add_variable(None, is_mask=True)
-    comparison = kernel.ComparisonOperation(left, op, right)
-    assignment = kernel.Assignment(var, comparison)
+    comparison = ComparisonOperation(left, op, right)
+    assignment = Assignment(var, comparison)
     block.add(assignment)
     return var
 
@@ -251,13 +253,13 @@ class Parser:
     left = self.expression(block, node.values[0])
     right = self.expression(block, node.values[1])
     if isinstance(node.op, ast.And):
-      op = kernel.Operator.bool_and
+      op = Operator.bool_and
     elif isinstance(node.op, ast.Or):
-      op = kernel.Operator.bool_or
+      op = Operator.bool_or
     else:
       raise Exception('Unexpected BoolOp (%s)'%(node.op.__class__))
-    operation = kernel.BinaryOperation(left, op, right)
-    assignment = kernel.Assignment(var, operation)
+    operation = BinaryOperation(left, op, right)
+    assignment = Assignment(var, operation)
     block.add(assignment)
     return var
 
@@ -283,8 +285,8 @@ class Parser:
       raise Exception('Invalid array operation')
     #Access the array specified index
     var = self.add_variable(None)
-    operation = kernel.ArrayAccess(array, index, is_read)
-    assignment = kernel.Assignment(var, operation)
+    operation = ArrayAccess(array, index, is_read)
+    assignment = Assignment(var, operation)
     return (var, assignment)
 
   #Parses an expression (AST Expr)
@@ -324,8 +326,8 @@ class Parser:
     else:
       if var is None:
         var = self.add_variable(None, is_mask=True)
-      operation = kernel.BinaryOperation(mask, op, block.mask)
-      assignment = kernel.Assignment(var, operation, vector_only=True)
+      operation = BinaryOperation(mask, op, block.mask)
+      assignment = Assignment(var, operation, vector_only=True)
       block.add(assignment)
       return var
 
@@ -336,9 +338,9 @@ class Parser:
     #Parse the condition
     cond = self.expression(block, src.test)
     #Generate the mask
-    mask = self.get_mask(block, cond, kernel.Operator.bit_and)
+    mask = self.get_mask(block, cond, Operator.bit_and)
     stop_index = len(block.code)
-    loop = kernel.WhileLoop(mask)
+    loop = WhileLoop(mask)
     #Recursively parse the body
     for stmt in src.body:
       self.statement(loop.block, stmt)
@@ -353,12 +355,12 @@ class Parser:
     #Parse the condition
     cond = self.expression(block, src.test)
     #Generate the masks
-    if_mask = self.get_mask(block, cond, kernel.Operator.bit_and)
+    if_mask = self.get_mask(block, cond, Operator.bit_and)
     if len(src.orelse) != 0:
-      else_mask = self.get_mask(block, cond, kernel.Operator.bit_andnot)
+      else_mask = self.get_mask(block, cond, Operator.bit_andnot)
     else:
       else_mask = None
-    ifelse = kernel.IfElse(if_mask, else_mask)
+    ifelse = IfElse(if_mask, else_mask)
     #Recursively parse the body (and the else body if there is one)
     for stmt in src.body:
       self.statement(ifelse.if_block, stmt)
@@ -394,11 +396,11 @@ class Parser:
       #Create a temporary variable if this is a multi-assignment
       if multi and not expr.is_temp:
         temp = self.add_variable(None)
-        assignment = kernel.Assignment(temp, expr)
+        assignment = Assignment(temp, expr)
         block.add(assignment)
         expr = temp
       #The final assignment will be added to the kernel later
-      result = [kernel.Assignment(var, expr, vector_only=True, mask=block.mask)]
+      result = [Assignment(var, expr, vector_only=True, mask=block.mask)]
       if asst is not None:
         result.append(asst)
       return result
@@ -466,7 +468,7 @@ class Parser:
       raise Exception('Docstring already defined')
     if not isinstance(stmt.value, ast.Str):
       raise Exception('Bad docstring type (%s)'%(stmt.value.__class__))
-    self.docstring = stmt.value.s
+    self.docstring = '\\n'.join(line.strip() for line in stmt.value.s.strip().split('\n'))
     self.kernel.set_docstring(self.docstring)
 
   #Parses statements (AST Stmt)

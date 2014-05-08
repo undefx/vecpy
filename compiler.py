@@ -6,10 +6,10 @@ in particular as a native Python module.
 
 
 import subprocess
-from kernel import *
-from compiler_constants import *
-from compiler_generic import Compiler_Generic
-from compiler_intel import Compiler_Intel
+from vecpy.kernel import *
+from vecpy.compiler_constants import *
+from vecpy.compiler_generic import Compiler_Generic
+from vecpy.compiler_intel import Compiler_Intel
 
 class Compiler:
 
@@ -117,7 +117,7 @@ class Compiler:
     src += 'delete [] threadArgs;'
     src.unindent()
     src += '}'
-    src += 'printf("Vector: %dx%dx%d=%d | Scalar: %d\\n", vectorsPerThread, vectorSize, numThreads, offset, args->N - offset);'
+    #src += 'printf("Vector: %dx%dx%d=%d | Scalar: %d\\n", vectorsPerThread, vectorSize, numThreads, offset, args->N - offset);'
     src += '//Handle any remaining elements'
     src += 'if(offset < args->N) {'
     src.indent()
@@ -315,10 +315,11 @@ class Compiler:
     src.section('VecPy generated entry point: Java')
     #Includes
     src += '//Includes'
+    src += '#include <stdlib.h>'
     src += '#include <jni.h>'
     src += ''
     #Wrapper for the core function
-    name_str = 'VecPy_%s'%k.name
+    name_str = 'VecPy_%s'%(k.name)
     if options.java_package is not None:
       name_str = '%s_%s'%(options.java_package, name_str)
       name_str = '_'.join(name_str.split('.'))
@@ -327,8 +328,8 @@ class Compiler:
     src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s(JNIEnv* env, jclass cls, %s) {'%(name_str, arg_str)
     src.indent()
     src += '//Make sure the buffers are directly allocated'
-    src += 'jclass %s = env->FindClass("java/nio/%s");'%(buffer_type, buffer_type)
-    src += 'jmethodID isDirect = env->GetMethodID(%s, "isDirect", "()Z");'%(buffer_type)
+    src += 'jclass Buffer = env->FindClass("java/nio/Buffer");'
+    src += 'jmethodID isDirect = env->GetMethodID(Buffer, "isDirect", "()Z");'
     for arg in k.get_arguments(uniform=False):
       src += 'if(!env->CallBooleanMethod(vp_%s, isDirect)) {'%(arg.name)
       src.indent()
@@ -376,6 +377,58 @@ class Compiler:
     src.unindent()
     src += '}'
     src += ''
+    #Aligned buffer allocation
+    name_str = 'VecPy_allocate'
+    if options.java_package is not None:
+      name_str = '%s_%s'%(options.java_package, name_str)
+      name_str = '_'.join(name_str.split('.'))
+    src += '//Aligned allocation'
+    src += 'extern "C" JNIEXPORT jobject JNICALL Java_%s(JNIEnv* env, jclass cls, jlong N) {'%(name_str)
+    src.indent()
+    src += '//Allocate space'
+    src += 'void* buffer;'
+    src += 'int result = posix_memalign(&buffer, (size_t)%d, (size_t)N);'%(options.arch['size'] * 4)
+    src += 'if(result != 0) { '
+    src.indent()
+    src += 'printf("Error allocating buffer (%%d)\\n", result);'
+    src += 'return NULL;'
+    src.unindent()
+    src += '}'
+    src += '//Instantiate a java ByteBuffer'
+    src += 'jobject byteBuffer = env->NewDirectByteBuffer(buffer, N);'
+    src += 'if(byteBuffer == NULL) { '
+    src.indent()
+    src += 'printf("Error instantiating direct ByteBuffer (not supported by JVM)\\n");'
+    src += 'return NULL;'
+    src.unindent()
+    src += '}'
+    src += 'return byteBuffer;'
+    src.unindent()
+    src += '}'
+    src += ''
+    #Aligned buffer free
+    name_str = 'VecPy_free'
+    if options.java_package is not None:
+      name_str = '%s_%s'%(options.java_package, name_str)
+      name_str = '_'.join(name_str.split('.'))
+    src += '//Free'
+    src += 'extern "C" JNIEXPORT jboolean JNICALL Java_%s(JNIEnv* env, jclass cls, jobject buffer) {'%(name_str)
+    src.indent()
+    src += '//Make sure the buffer is directly allocated'
+    src += 'jclass Buffer = env->FindClass("java/nio/Buffer");'
+    src += 'jmethodID isDirect = env->GetMethodID(Buffer, "isDirect", "()Z");'
+    src += 'if(!env->CallBooleanMethod(buffer, isDirect)) {'
+    src.indent()
+    src += 'printf("Buffer not direct\\n");'
+    src += 'return false;'
+    src.unindent()
+    src += '}'
+    src += '//Free the memory'
+    src += 'free(env->GetDirectBufferAddress(buffer));'
+    src += 'return true;'
+    src.unindent()
+    src += '}'
+    src += ''
     #Save code to file
     file_name = Compiler.get_java_file(k)
     with open(file_name, 'w') as file:
@@ -393,16 +446,23 @@ class Compiler:
     arg_str = ', '.join('%s %s'%(uniform_type if arg.is_uniform else buffer_type, arg.name) for arg in args)
     src += 'public class VecPy {'
     src.indent()
-    #Helper function to allocate a direct buffer
-    src += '//Helper function to allocate a direct buffer'
-    src += 'public static %s get%s(int N) {'%(buffer_type, buffer_type)
+    #Helper functions to allocate and free aligned direct buffers
+    #JNI wrapper
+    src += '//JNI wrappers'
+    src += 'public static native boolean %s(%s);'%(k.name, arg_str)
+    src += 'private static native ByteBuffer allocate(long N);'
+    src += 'private static native boolean free(Buffer buffer);'
+    src += '//Helper functions to allocate and free aligned direct buffers'
+    src += 'public static %s newBuffer(long N) {'%(buffer_type)
     src.indent()
-    src += 'return ByteBuffer.allocateDirect(N * 4).order(ByteOrder.nativeOrder()).as%s();'%(buffer_type)
+    src += 'return allocate(N * %d).order(ByteOrder.nativeOrder()).as%s();'%(4, buffer_type)
     src.unindent()
     src += '}'
-    #JNI wrapper
-    src += '//JNI wrapper'
-    src += 'public static native boolean %s(%s);'%(k.name, arg_str)
+    src += 'public static boolean deleteBuffer(Buffer buffer) {'
+    src.indent()
+    src += 'return free(buffer);'
+    src.unindent()
+    src += '}'
     src.unindent()
     src += '}'
     src += ''
@@ -444,7 +504,7 @@ class Compiler:
     src += 'NAME=VecPy_%s.so'%(k.name)
     src += 'rm -f $NAME'
     src += 'g++ -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
-    src += 'nm $NAME | grep " T "'
+    #src += 'nm $NAME | grep " T "'
     #Save code to file
     file_name = 'build.sh'
     with open(file_name, 'w') as file:
@@ -468,9 +528,6 @@ class Compiler:
         options.threads = multiprocessing.cpu_count()
       except(ImportError, NotImplementedError):
         options.threads = 1
-      print('Detected %s core(s)'%(options.threads))
-    else:
-      print('Using %s thread(s)'%(options.threads))
     #Show options
     options.show()
     #Generate the kernel

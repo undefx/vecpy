@@ -36,7 +36,7 @@ class DataType:
 
 #Available language bindings
 class Binding:
-  all    = 'all'
+  all    = '*all*'
   cpp    = 'cpp'
   python = 'python'
   java   = 'java'
@@ -44,6 +44,8 @@ class Binding:
 #Compile time options
 class Options:
   def __init__(self, arch, type, bindings=(Binding.all,), threads=None, java_package='vecpy'):
+    if arch is None or type is None or bindings is None or len(bindings) == 0:
+      raise Exception('Invalid options')
     #Target architecture
     self.arch = arch
     #Kernel data type
@@ -56,11 +58,14 @@ class Options:
     self.java_package = java_package
   def show(self):
     print('=' * 40)
+    print('VecPy options')
+    print('-' * 40)
     print('Architecture:      ' + self.arch['name'])
     print('Data Type:         ' + self.type)
-    print('Language Bindings: ' + str(self.bindings))
+    print('Language Bindings: ' + ','.join(self.bindings))
     print('Threads:           ' + str(self.threads))
-    print('Java Package:      ' + str(self.java_package))
+    if Binding.all in self.bindings or Binding.java in self.bindings:
+      print('Java Package:      ' + str(self.java_package))
     print('=' * 40)
 
 #Indent amount

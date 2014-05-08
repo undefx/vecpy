@@ -46,6 +46,7 @@ class Operator:
   subtract = '-'
   multiply = '*'
   divide = '/'
+  divide_int = '//'
   mod = '%'
   pow = '**'
   eq = '=='

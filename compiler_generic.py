@@ -1,17 +1,11 @@
-from kernel import *
-from compiler_constants import *
+from vecpy.kernel import *
+from vecpy.compiler_constants import *
 
 class Compiler_Generic:
 
   def compile_kernel(k, options):
     src = Formatter()
     src.section('Target Architecture: %s (%s)'%(options.arch['name'], options.type))
-    if options.type == DataType.float:
-      literal_format = '%.7ff'
-    elif options.type == DataType.uint32:
-      literal_format = '0x%08x'
-    else:
-      raise Exception('Type not supported (%s)'%(options.type))
     #Includes
     src += '//Includes'
     src += '#include <math.h>'
@@ -30,7 +24,10 @@ class Compiler_Generic:
     #Literals
     src += '//Literals'
     for var in k.get_literals():
-      value = literal_format%(var.value)
+      if DataType.is_floating(options.type):
+        value = '%sf'%(str(var.value))
+      else:
+        value = '0x%08x'%(var.value)
       src += 'const %s %s = %s;'%(options.type, var.name, value)
     src += ''
     #Temporary (stack) variables
@@ -105,13 +102,16 @@ class Compiler_Generic:
               src += '%s = ~%s & %s;'%(var, left, right)
             else:
               src += '%s = %s %s %s;'%(var, left, op, right)
-          elif op == '%':
-            if options.type == DataType.float:
-              src += '%s = fmod(%s, %s);'%(var, left, right)
-            elif options.type == DataType.uint32:
-              src += '%s = %s %s %s;'%(var, left, op, right)
+          elif op == '//':
+            if DataType.is_floating(options.type):
+              src += '%s = floor(%s / %s);'%(var, left, right)
             else:
-              raise Exception('mod not implemented for %s'%(options.type))
+              src += '%s = %s / %s;'%(var, left, op, right)
+          elif op == '%':
+            if DataType.is_floating(options.type):
+              src += '%s = fmod(%s, %s);'%(var, left, right)
+            else:
+              src += '%s = %s %s %s;'%(var, left, op, right)
           elif op == '**':
             src += '%s = pow(%s, %s);'%(var, left, right)
           elif op in Intrinsic.binary_functions + Math.binary_functions:
