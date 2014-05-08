@@ -44,7 +44,7 @@ class Compiler_Intel:
     src += '//Literals'
     for var in k.get_literals():
       if DataType.is_floating(options.type):
-        value = '%sf'%(str(var.value))
+        value = str(var.value)
       else:
         value = '0x%08x'%(var.value)
       trans.set('const %s %s'%(vecType, var.name), value)

@@ -25,7 +25,7 @@ class Compiler_Generic:
     src += '//Literals'
     for var in k.get_literals():
       if DataType.is_floating(options.type):
-        value = '%sf'%(str(var.value))
+        value = str(var.value)
       else:
         value = '0x%08x'%(var.value)
       src += 'const %s %s = %s;'%(options.type, var.name, value)

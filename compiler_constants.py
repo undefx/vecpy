@@ -60,10 +60,10 @@ class Options:
     print('=' * 40)
     print('VecPy options')
     print('-' * 40)
-    print('Architecture:      ' + self.arch['name'])
     print('Data Type:         ' + self.type)
-    print('Language Bindings: ' + ','.join(self.bindings))
     print('Threads:           ' + str(self.threads))
+    print('Architecture:      ' + self.arch['name'])
+    print('Language Bindings: ' + ','.join(self.bindings))
     if Binding.all in self.bindings or Binding.java in self.bindings:
       print('Java Package:      ' + str(self.java_package))
     print('=' * 40)
