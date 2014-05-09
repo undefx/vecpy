@@ -387,10 +387,10 @@ class Compiler:
     src.indent()
     src += '//Allocate space'
     src += 'void* buffer;'
-    src += 'int result = posix_memalign(&buffer, (size_t)%d, (size_t)N);'%(options.arch['size'] * 4)
+    src += 'int result = posix_memalign(&buffer, 32, (size_t)N);'
     src += 'if(result != 0) { '
     src.indent()
-    src += 'printf("Error allocating buffer (%%d)\\n", result);'
+    src += 'printf("Error allocating buffer (%d)\\n", result);'
     src += 'return NULL;'
     src.unindent()
     src += '}'
