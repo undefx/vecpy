@@ -8,37 +8,31 @@ Hello, world!
 =====
 One of the primary design goals of VecPy is *simplicity*. In just a few lines of code, VecPy translates and compiles a Python function into an efficient, data-parallel native library. The generated library can then be loaded as a Python module, allowing the optimized function to be used as a drop-in replacement for the original Python function. The following program illustrates how simple it can be to use VecPy to significantly improve Python program performance.
 ```python
-#Import VecPy and other modules
-from parser import Parser
-from compiler import Compiler
-from compiler_constants import *
-from array import array
-from random import uniform
+#Import VecPy
+from vecpy.runtime import *
+from vecpy.compiler_constants import *
 
 #Define the kernel
-def shapes(radius, edge, vol_sphere, vol_icos):
-  """Calculates sphere and an icosahedron volumes."""
-  vol_sphere = (4/3 * math.pi) * (radius ** 3)
-  vol_icos = (5/12) * (3 + math.sqrt(5)) * (edge ** 3)
-  return (vol_sphere, vol_icos)
+def volume(radius, volume):
+  volume = (4/3 * math.pi) * (radius ** 3)
 
 #Generate some data
-n = 1000
-def rand():
-  return array('f', [uniform(0, 1) for i in range(n)])
-radii, edges, spheres, icosahedrons = rand(), rand(), rand(), rand()
+def data():
+  array = get_array('f', 10)
+  for i in range(len(array)): array[i] = (.1 + i/10)
+  return array
+radii, volumes = data(), data()
 
-#Call VecPy to generate the a native module
-krnl = Parser.parse(shapes)
-opts = Options(Architecture.sse4, DataType.float)
-Compiler.compile(krnl, opts)
+#Call VecPy to generate the native module
+vectorize(volume, Options(Architecture.avx2, DataType.float))
 
-#Import the newly-minted module and execute the data-parallel kernel
-import VecPy_shapes
-VecPy_shapes.shapes(radii, edges, spheres, icosahedrons)
+#Import the newly-minted module and execute kernel
+from vecpy_volume import volume
+volume(radii, volumes)
 
-#Use the results!
-print(spheres, icosahedrons)
+#Print the results!
+print('Radius:', ', '.join('%.3f'%(r) for r in radii))
+print('Volume:', ', '.join('%.3f'%(v) for v in volumes))
 ```
 
 Features and Functionality
@@ -48,10 +42,10 @@ Other design goals of VecPy include *utility*, *flexibility*, and *efficiency*.
 VecPy aims to implement a sufficiently large feature set to be useful for meaningful, real-world applications. Conditional operations within `if-elif-else` blocks and `while` loops are fully implemented, and the following Python operators, functions, and constants are currently available:
 
   - **Operators**
-    - Unary: +, -, ~
-    - Arithmetic: +, -, \*, /, %, \*\*
+    - Arithmetic: +, -, \*, /, //, %, \*\*
     - Comparison: ==, !=, >, >=, <, <=
     - Boolean: and, or, not
+    - Bitwise: &, |, ^, ~, <<, >> (integer only)
   - **Functions**
     - global: abs, max, min, pow, round
     - math: acos, acosh, asin, asinh, atan, atan2, atanh, ceil, copysign, cos, cosh, erf, erfc, exp, expm1, fabs, floor, fmod, gamma, hypot, lgamma, log, log10, log1p, log2, pow, sin, sinh, sqrt, tan, tanh, trunc
@@ -62,7 +56,7 @@ VecPy provides many options to allow for extensive customization. The following 
 
   - **Data Types**
     - 32-bit floats
-    - 32-bit integers (experimental)
+    - 32-bit unsigned integers
   - **Language Bindings**
     - C++
     - Python
@@ -80,6 +74,6 @@ VecPy relies on multi-threading and SIMD execution to achieve the fastest possib
 Requirements
 =====
   - Python 3.x (to run VecPy)
-  - Linux (to compile the native library)
+  - g++ (to compile the native library)
   - Optional: Python 3.x headers if compiling as a Python module
   - Optional: JDK if compiling for use with Java via JNI
