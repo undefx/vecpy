@@ -501,7 +501,7 @@ class Compiler:
   def build(k, build_flags):
     src = Formatter()
     #Generate the build script
-    src += 'NAME=VecPy_%s.so'%(k.name)
+    src += 'NAME=vecpy_%s.so'%(k.name)
     src += 'rm -f $NAME'
     src += 'g++ -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
     #src += 'nm $NAME | grep " T "'
