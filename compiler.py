@@ -178,7 +178,7 @@ class Compiler:
   #Generates the Python API
   def compile_python(k, options):
     type = options.type
-    module_name = 'VecPy_' + k.name
+    module_name = 'vecpy_' + k.name
     args = k.get_arguments()
     if DataType.is_floating(type):
       uniform_pytype = 'f'
