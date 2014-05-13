@@ -43,7 +43,7 @@ class Compiler_Generic:
     src += ''
     #Begin input loop
     src += '//Loop over input'
-    src += 'for(unsigned int index = 0; index < args->N; ++index) {'
+    src += 'for(uint64_t index = 0; index < args->N; ++index) {'
     src += ''
     #Function body
     src.indent()

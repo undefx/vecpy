@@ -55,7 +55,7 @@ class Compiler:
     src += '}'
     src += 'static bool isAligned(void* data) {'
     src.indent()
-    src += 'return reinterpret_cast<unsigned long>(data) %% %dUL == 0UL;'%(options.arch['size'] * 4)
+    src += 'return reinterpret_cast<uint64_t>(data) %% %dUL == 0UL;'%(options.arch['size'] * 4)
     src.unindent()
     src += '}'
     src += 'static bool checkArgs(KernelArgs* args) {'
@@ -82,18 +82,18 @@ class Compiler:
     src.unindent()
     src += '}'
     src += '//Compile-time constants'
-    src += 'const unsigned int vectorSize = %d;'%(options.arch['size'])
-    src += 'const unsigned int numThreads = %d;'%(options.threads)
+    src += 'const uint64_t vectorSize = %d;'%(options.arch['size'])
+    src += 'const uint64_t numThreads = %d;'%(options.threads)
     src += '//Division of labor'
-    src += 'const unsigned int vectorsPerThread = args->N / (vectorSize * numThreads);'
-    src += 'const unsigned int elementsPerThread = vectorsPerThread * vectorSize;'
+    src += 'const uint64_t vectorsPerThread = args->N / (vectorSize * numThreads);'
+    src += 'const uint64_t elementsPerThread = vectorsPerThread * vectorSize;'
     src += '//Execute on multiple threads'
-    src += 'unsigned int offset = 0;'
+    src += 'uint64_t offset = 0;'
     src += 'if(elementsPerThread > 0) {'
     src.indent()
     src += 'pthread_t* threads = new pthread_t[numThreads];'
     src += 'KernelArgs* threadArgs = new KernelArgs[numThreads];'
-    src += 'for(int t = 0; t < numThreads; t++) {'
+    src += 'for(uint64_t t = 0; t < numThreads; t++) {'
     src.indent()
     for arg in k.get_arguments():
       if arg.is_uniform:
@@ -108,7 +108,7 @@ class Compiler:
     src += 'pthread_create(&threads[t], NULL, threadStart, (void*)&threadArgs[t]);'
     src.unindent()
     src += '}'
-    src += 'for(int t = 0; t < numThreads; t++) {'
+    src += 'for(uint64_t t = 0; t < numThreads; t++) {'
     src.indent()
     src += ' pthread_join(threads[t], NULL); '
     src.unindent()
@@ -159,7 +159,7 @@ class Compiler:
       arg_str += '%s%s %s, '%(options.type, '*' if not arg.is_uniform else '', arg.name)
     #Wrapper for the core function
     src += '//Wrapper for the core function'
-    src += 'extern "C" bool %s(%sint N) {'%(k.name, arg_str)
+    src += 'extern "C" bool %s(%suint64_t N) {'%(k.name, arg_str)
     src.indent()
     src += 'KernelArgs args;'
     for arg in k.get_arguments():
@@ -185,7 +185,7 @@ class Compiler:
       uniform_ctype = 'float'
     elif DataType.is_integral(type):
       uniform_pytype = 'I'
-      uniform_ctype = 'unsigned int'
+      uniform_ctype = 'uint64_t'
     else:
       raise Exception('Unsupported data type (%s)'%(type))
     src = Formatter()
@@ -225,7 +225,7 @@ class Compiler:
       src += '}'
     #Get the number of elements from the length of the first buffer
     src += '//Number of elements to process'
-    src += 'int N = vp_%s.len / sizeof(%s);'%(k.get_arguments(uniform=False, array=False)[0].name, type)
+    src += 'uint64_t N = vp_%s.len / sizeof(%s);'%(k.get_arguments(uniform=False, array=False)[0].name, type)
     src += '//Check length for all buffers'
     for arg in k.get_arguments(uniform=False):
       num = 'N'
@@ -388,7 +388,7 @@ class Compiler:
     src += '//Allocate space'
     src += 'void* buffer;'
     src += 'int result = posix_memalign(&buffer, 32, (size_t)N);'
-    src += 'if(result != 0) { '
+    src += 'if(result != 0) {'
     src.indent()
     src += 'printf("Error allocating buffer (%d)\\n", result);'
     src += 'return NULL;'
@@ -475,13 +475,16 @@ class Compiler:
   def compile_kernel(k, options):
     src = Formatter()
     src.section('VecPy generated kernel: %s'%(k.name))
+    src += '//Integer types'
+    src += '#include <stdint.h>'
+    src += ''
     #The KernelArgs struct
     src += '//Kernel arguments'
     src += 'struct KernelArgs {'
     src.indent()
     for arg in k.get_arguments():
       src += '%s%s %s;'%(options.type, '*' if not arg.is_uniform else '', arg.name)
-    src += 'unsigned int N;'
+    src += 'uint64_t N;'
     src.unindent()
     src += '};'
     src += ''

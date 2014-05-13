@@ -1,5 +1,6 @@
 import array
 import math
+import time
 from vecpy.parser import Parser
 from vecpy.compiler import Compiler
 
@@ -31,3 +32,16 @@ def get_array(type, length, align=32, value=0):
 #Returns aligned arrays
 def get_arrays(num, type, length, align=32, value=0):
   return [get_array(type, length, align, value) for i in range(num)]
+
+#Calculates kernel runtime and speedup
+def get_speedup(kernel1, kernel2):
+  #Execute both kernels
+  time1 = time.perf_counter()
+  kernel1()
+  time2 = time.perf_counter()
+  kernel2()
+  time3 = time.perf_counter()
+  #Return runtime and speedup
+  delta1 = time2 - time1
+  delta2 = time3 - time2
+  return (delta1, delta2, delta1 / delta2)

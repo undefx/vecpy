@@ -58,7 +58,7 @@ class Compiler_Intel:
     src += ''
     #Begin input loop
     src += '//Loop over input'
-    src += 'for(unsigned int index = 0; index < args->N; index += %d) {'%(size)
+    src += 'for(uint64_t index = 0; index < args->N; index += %d) {'%(size)
     src += ''
     #Function body
     src.indent()
