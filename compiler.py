@@ -506,7 +506,7 @@ class Compiler:
     #Generate the build script
     src += 'NAME=vecpy_%s.so'%(k.name)
     src += 'rm -f $NAME'
-    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s  -I$JAVA_HOME/include -I$JAVA_HOME/include/linux'%(' '.join(build_flags), Compiler.get_core_file(k))
+    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
     #src += 'nm $NAME | grep " T "'
     #Save code to file
     file_name = 'build.sh'
@@ -544,13 +544,13 @@ class Compiler:
     if Binding.all in options.bindings or Binding.python in options.bindings:
       Compiler.compile_python(kernel, options)
       include_files.append(Compiler.get_python_file(kernel))
-      build_flags.append('-lpython3.4m')
-      build_flags.append('-I/usr/include/python3.4m/')
+      build_flags.append('$(python3-config --libs)')
+      build_flags.append('$(python3-config --includes)')
     if Binding.all in options.bindings or Binding.java in options.bindings:
       Compiler.compile_java(kernel, options)
       include_files.append(Compiler.get_java_file(kernel))
-      build_flags.append('-I/usr/java/latest/include/')
-      build_flags.append('-I/usr/java/latest/include/linux/')
+      build_flags.append('-I$JAVA_HOME/include/')
+      build_flags.append('-I$JAVA_HOME/include/linux/')
     #Generate the core
     Compiler.compile_core(kernel, options, include_files)
     #Compile the module
