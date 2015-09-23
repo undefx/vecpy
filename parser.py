@@ -386,16 +386,20 @@ class Parser:
       (var, asst) = self.subscript(block, dst)
     else:
       raise Exception('Unexpected assignment destination (%s)'%(dst.__class__))
-    #Set the output flag is the variable is a kernel argument
+    #Sanity checks
     if var.is_uniform:
       raise Exception('Can\'t modify a uniform variable')
-    if var.is_arg:
+    if (var.stride == 1) ^ (expr.stride == 1):
+      raise Exception('Can\'t assign scalar to array (or vice versa)')
+    #Set the output flag if the variable is a scalar kernel argument
+    if var.is_arg and var.stride == 1:
       var.is_output = True
     #Don't generate a self assignment
     if var != expr:
       #Create a temporary variable if this is a multi-assignment
       if multi and not expr.is_temp:
         temp = self.add_variable(None)
+        temp.stride = expr.stride
         assignment = Assignment(temp, expr)
         block.add(assignment)
         expr = temp

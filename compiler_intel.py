@@ -954,3 +954,14 @@ class Compiler_Intel:
     def min(self, *args):
       args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
       self.src += '%s = _mm256_xor_si256(SIGN_BITS, _mm256_min_epi32(%s, %s));'%(args[0], args[1], args[2])
+    #Experimental - array access
+    def array_read(self, *args):
+      (output, array, index, stride) = args
+      for i in range(self.size):
+        mask = 'MASK_LANE_%d'%(i)
+        input = '_mm256_set1_epi32(%s[%d + _mm256_extract_epi32(%s, %d)])'%(array, stride * i, index, i)
+        self.src += '%s = _mm256_or_si256(_mm256_and_si256(%s, %s), _mm256_andnot_si256(%s, %s));'%(output, mask, input, mask, output)
+    def array_write(self, *args):
+      (input, array, index, stride) = args
+      for i in range(self.size):
+        self.src += '%s[%d + _mm256_extract_epi32(%s, %d)] = _mm256_extract_epi32(%s, %d);'%(array, stride * i, index, i, input, i)
