@@ -51,8 +51,8 @@ class Compiler_Intel:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
-    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables(uniform=False, array=False)))
-    vars = ['*%s'%(var.name) for var in k.get_variables(uniform=False, array=True)]
+    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables(uniform=False, fuse=False, array=False)))
+    vars = ['*%s'%(var.name) for var in k.get_variables(uniform=False, fuse=False, array=True)]
     if len(vars) > 0:
       src += '%s %s;'%(options.type, ', '.join(vars))
     src += ''
@@ -82,7 +82,7 @@ class Compiler_Intel:
     src += ''
     #Outputs
     src += '//Outputs'
-    for arg in k.get_arguments(output=True):
+    for arg in k.get_arguments(output=True, fuse=False):
       trans.store('&args->%s[index]'%(arg.name), arg.name)
     src += ''
     #End input loop
@@ -102,13 +102,21 @@ class Compiler_Intel:
         src += '//>>> %s'%(stmt.comment)
       elif isinstance(stmt, Assignment):
         if isinstance(stmt.expr, Variable):
+          output = stmt.var.name
+          input = stmt.expr.name
           if stmt.vector_only:
             mask = stmt.mask.name
-            output = stmt.var.name
-            input = stmt.expr.name
-            trans.mask(input, output, mask)
+            if stmt.var.is_fuse:
+              #Write directly to output
+              trans.fuse(input, output, mask)
+            else:
+              trans.mask(input, output, mask)
           else:
-            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
+            if stmt.var.is_fuse:
+              #Write directly to output
+              trans.fuse(input, output, 'MASK_TRUE')
+            else:
+              src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
         elif isinstance(stmt.expr, BinaryOperation):
           op = stmt.expr.op
           var = stmt.var.name
@@ -290,6 +298,8 @@ class Compiler_Intel:
     def store(self, *args):
       self.error()
     def mask(self, *args):
+      self.error()
+    def fuse(self, *args):
       self.error()
     #Python arithmetic operators
     def add(self, *args):
@@ -591,6 +601,8 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128i'
       self.test = '_mm_movemask_epi8'
+      self.extract = '_mm_extract_epi32'
+      self.all_zeroes = '_mm_testz_si128'
     #Misc
     def setup(self):
       self.src += 'const %s MASK_FALSE = _mm_setzero_si128();'%(self.type)
@@ -614,6 +626,12 @@ class Compiler_Intel:
     def mask(self, *args):
       (input, output, mask) = args
       self.mask_1_2(input, output, mask, '_mm_or_si128', '_mm_and_si128', '_mm_andnot_si128')
+    def fuse(self, *args):
+      (input, output, mask) = args
+      condition = ''
+      if mask != 'MASK_TRUE':
+        condition = 'if(!%s(%s, %s)) '%(self.all_zeroes, mask, mask)
+      self.src += '%sargs->%s[0] = %s(%s, 0);'%(condition, output, self.extract, input)
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_epi32', args)
@@ -862,6 +880,8 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m256i'
       self.test = '_mm256_movemask_epi8'
+      self.extract = '_mm256_extract_epi32'
+      self.all_zeroes = '_mm256_testz_si256'
     #Misc
     def setup(self):
       self.src += 'const %s MASK_FALSE = _mm256_setzero_si256();'%(self.type)
@@ -885,6 +905,12 @@ class Compiler_Intel:
     def mask(self, *args):
       (input, output, mask) = args
       self.mask_1_2(input, output, mask, '_mm256_or_si256', '_mm256_and_si256', '_mm256_andnot_si256')
+    def fuse(self, *args):
+      (input, output, mask) = args
+      condition = ''
+      if mask != 'MASK_TRUE':
+        condition = 'if(!%s(%s, %s)) '%(self.all_zeroes, mask, mask)
+      self.src += '%sargs->%s[0] = %s(%s, 0);'%(condition, output, self.extract, input)
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm256_add_epi32', args)
@@ -901,8 +927,7 @@ class Compiler_Intel:
     def ge(self, *args):
       #Greater than or equal to
       left, right = '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2])
-      args = (args[0], '_mm256_cmpgt_epi32(%s, %s)'%(left, right), '_mm256_cmpeq_epi32(%s, %s)'%(args[1], args[2]))
-      self.bit_or(args)
+      self.bit_or(args[0], '_mm256_cmpgt_epi32(%s, %s)'%(left, right), '_mm256_cmpeq_epi32(%s, %s)'%(args[1], args[2]))
     def gt(self, *args):
       args = (args[0], '_mm256_xor_si256(SIGN_BITS, %s)'%(args[1]), '_mm256_xor_si256(SIGN_BITS, %s)'%(args[2]))
       self.vector_1_2('_mm256_cmpgt_epi32', args)

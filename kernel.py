@@ -7,7 +7,7 @@ The Kernel is a set of operations to be performed on a set of data.
 class Variable:
   #A unique variable identifier
   index = 0
-  def __init__(self, name=None, is_arg=False, is_uniform=False, is_temp=False, is_mask=False, stride=1, value=None):
+  def __init__(self, name=None, is_arg=False, is_uniform=False, is_fuse=False, is_temp=False, is_mask=False, stride=1, value=None):
     if name is None:
       if value is None:
         if is_mask:
@@ -21,8 +21,10 @@ class Variable:
     self.name = name
     #Whether or not the variable is an argument
     self.is_arg = is_arg
-    #Whether or not the variable is a uniform (scalar) argument
+    #Whether or not the variable is a uniform (scalar) argument - read-only
     self.is_uniform = is_uniform
+    #Whether or not the variable is a fuse (scalar) argument - write-only
+    self.is_fuse = is_fuse
     #Whether or not the variable is implicit
     self.is_temp = is_temp
     #Whether or not this variable is a bit mask
@@ -275,15 +277,15 @@ class Kernel:
     self.docstring = docstring
 
   #Returns a list of arguments sorted by order of appearance
-  def get_arguments(self, input=None, output=None, uniform=None, array=None):
+  def get_arguments(self, input=None, output=None, uniform=None, fuse=None, array=None):
     args = sorted(list(self.arguments.values()), key=lambda arg: arg.index)
-    return [arg for arg in args if (input is None or input == arg.is_input) and (output is None or output == arg.is_output) and (uniform is None or uniform == arg.is_uniform) and (array is None or array == (arg.stride > 1))]
+    return [arg for arg in args if (input is None or input == arg.is_input) and (output is None or output == arg.is_output) and (uniform is None or uniform == arg.is_uniform) and (fuse is None or fuse == arg.is_fuse) and (array is None or array == (arg.stride > 1))]
 
   #Returns a list of literals sorted by value
   def get_literals(self):
     return sorted(list(self.literals.values()), key=lambda lit: lit.value)
 
   #Returns a list of all variables sorted by order of appearance
-  def get_variables(self, mask=None, uniform=None, array=None):
+  def get_variables(self, mask=None, uniform=None, fuse=None, array=None):
     vars = sorted(list(self.variables.values()), key=lambda var: var.index)
-    return [var for var in vars if var.value is None and (mask is None or mask == var.is_mask)  and (uniform is None or uniform == var.is_uniform) and (array is None or array == (var.stride > 1))]
+    return [var for var in vars if var.value is None and (mask is None or mask == var.is_mask)  and (uniform is None or uniform == var.is_uniform) and (fuse is None or fuse == var.is_fuse) and (array is None or array == (var.stride > 1))]

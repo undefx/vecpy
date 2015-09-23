@@ -32,8 +32,8 @@ class Parser:
     self.docstring = None
 
   #Adds an argument to the kernel
-  def add_argument(self, name, is_uniform, stride):
-    return self.kernel.add_variable(Variable(name=name, is_arg=True, is_uniform=is_uniform, stride=stride))
+  def add_argument(self, name, is_uniform, is_fuse, stride):
+    return self.kernel.add_variable(Variable(name=name, is_arg=True, is_uniform=is_uniform, is_fuse=is_fuse, stride=stride))
 
   #Adds a variable to the kernel if it hasn't already been defined
   def add_variable(self, name, is_mask=False):
@@ -297,6 +297,8 @@ class Parser:
       var = self.kernel.get_variable(expr.id)
       if var is None:
         raise Exception('Undefined Variable (%s)'%(expr.id))
+      if var.is_fuse:
+        raise Exception('Fuse variables are write-only')
       if var.is_arg:
         var.is_input = True
     elif isinstance(expr, ast.BinOp):
@@ -381,14 +383,20 @@ class Parser:
     #Make or get the destination variable
     asst = None
     if isinstance(dst, ast.Name):
-      var = self.add_variable(dst.id, is_mask=(expr.is_mask))
+      temp = self.kernel.get_variable(dst.id)
+      if temp is not None and temp.is_fuse:
+        #Fuses are written to directly
+        var = temp
+      else:
+        #Everything else gets and intermediate variable
+        var = self.add_variable(dst.id, is_mask=(expr.is_mask))
     elif isinstance(dst, ast.Subscript):
       (var, asst) = self.subscript(block, dst)
     else:
       raise Exception('Unexpected assignment destination (%s)'%(dst.__class__))
     #Sanity checks
     if var.is_uniform:
-      raise Exception('Can\'t modify a uniform variable')
+      raise Exception('Uniform variables are read-only')
     if (var.stride == 1) ^ (expr.stride == 1):
       raise Exception('Can\'t assign scalar to array (or vice versa)')
     #Set the output flag if the variable is a scalar kernel argument
@@ -558,15 +566,15 @@ class Parser:
 
       #Get the function's arguments
       for arg in node.args.args:
-        name = arg.arg
-        is_uniform = False
-        stride = 1
+        name, is_uniform, is_fuse, stride = arg.arg, False, False, 1
         if arg.annotation is not None:
           ann = arg.annotation
           if isinstance(ann, ast.Str):
             label = ann.s
             if label == 'uniform':
               is_uniform = True
+            elif label == 'fuse':
+              is_fuse = True
             else:
               raise Exception('Unsupported annotation (%s)'%(str))
           elif isinstance(ann, ast.Num):
@@ -575,7 +583,7 @@ class Parser:
               raise Exception('Stride must be positive')
           else:
             raise Exception('Unsupported annotation (%s)'%(ann.__class__))
-        parser.add_argument(name, is_uniform, stride)
+        parser.add_argument(name, is_uniform, is_fuse, stride)
 
       #The body!
       for stmt in node.body:

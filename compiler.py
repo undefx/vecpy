@@ -98,6 +98,8 @@ class Compiler:
     for arg in k.get_arguments():
       if arg.is_uniform:
         src += 'threadArgs[t].%s = args->%s;'%(arg.name, arg.name)
+      elif arg.is_fuse:
+        src += 'threadArgs[t].%s = &args->%s[0];'%(arg.name, arg.name)
       else:
         offset = 'offset'
         if arg.stride > 1:
@@ -125,6 +127,8 @@ class Compiler:
     for arg in k.get_arguments():
       if arg.is_uniform:
         src += 'lastArgs.%s = args->%s;'%(arg.name, arg.name)
+      elif arg.is_fuse:
+        src += 'lastArgs.%s = &args->%s[0];'%(arg.name, arg.name)
       else:
         offset = 'offset'
         if arg.stride > 1:
@@ -231,6 +235,8 @@ class Compiler:
       num = 'N'
       if arg.stride > 1:
         num = '%s * %d'%(num, arg.stride)
+      elif arg.is_fuse:
+        num = '1'
       src += 'if(vp_%s.len / sizeof(%s) != %s) {'%(arg.name, type, num)
       src.indent()
       src += 'printf("Python buffer sizes don\'t match (%s)\\n");'%(arg.name)
@@ -351,6 +357,8 @@ class Compiler:
       num = 'N'
       if arg.stride > 1:
         num = '%s * %d'%(num, arg.stride)
+      elif arg.is_fuse:
+        num = '1'
       src += 'if(env->GetDirectBufferCapacity(vp_%s) != %s) { '%(arg.name, num)
       src.indent()
       src += 'printf("Java buffer sizes don\'t match (%s)\\n");'%(arg.name)
@@ -506,7 +514,7 @@ class Compiler:
     #Generate the build script
     src += 'NAME=vecpy_%s.so'%(k.name)
     src += 'rm -f $NAME'
-    src += 'g++ -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
+    src += 'g++ -Wall -Wno-unused-variable -Wno-unused-but-set-variable -O3 -fPIC -shared %s -o $NAME %s'%(' '.join(build_flags), Compiler.get_core_file(k))
     #src += 'nm $NAME | grep " T "'
     #Save code to file
     file_name = 'build.sh'
