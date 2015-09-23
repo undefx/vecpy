@@ -656,7 +656,7 @@ class Compiler_Intel:
     def shift_left(self, *args):
       if len(args) == 4 and args[3]:
         #Shifting all lanes by the same constant
-        self.vector_1_2('_mm_slli_epi32', args[0:2])
+        self.vector_1_2('_mm_slli_epi32', args[0:3])
       else:
         #Shift each lane separately
         (output, left, right) = args
@@ -920,7 +920,7 @@ class Compiler_Intel:
     def bit_andnot(self, *args):
       self.vector_1_2('_mm256_andnot_si256', args)
     def bit_or(self, *args):
-      self.vector_1_2('_mm256_xor_si256', args)
+      self.vector_1_2('_mm256_or_si256', args)
     def bit_xor(self, *args):
       self.vector_1_2('_mm256_xor_si256', args)
     def bit_not(self, *args):
@@ -929,10 +929,10 @@ class Compiler_Intel:
     def shift_left(self, *args):
       if len(args) == 4 and args[3]:
         #Shifting all lanes by the same constant
-        self.vector_1_2('_mm256_slli_epi32', args[0:2])
+        self.vector_1_2('_mm256_slli_epi32', args[0:3])
       else:
         #Shift each lane separately
-        self.vector_1_2('_mm256_sllv_epi32', args)
+        self.vector_1_2('_mm256_sllv_epi32', args[0:3])
     def shift_right(self, *args):
       if len(args) == 4 and args[3]:
         #Shifting all lanes by the same constant

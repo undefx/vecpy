@@ -153,7 +153,7 @@ class Parser:
       return Operator.ge
     else:
       raise Exception('Unexpected CmpOp (%s)'%(op.__class__))
-  
+
   #Parses a function call (AST Call)
   def call(self, block, expr, var):
     if var == None:
@@ -514,6 +514,12 @@ class Parser:
 
   #Parses the kernel defined in a string of source code
   def parseFromSource(source_code, kernel_name):
+    #Strip leading whitespace (e.g. a static method inside some class)
+    source_lines = source_code.split('\n')
+    leading_spaces = len(source_lines[0]) - len(source_lines[0].lstrip())
+    if leading_spaces > 0:
+      source_code = '\n'.join([line[leading_spaces:] for line in source_lines])
+
     #Parse the source to build the AST
     root = ast.parse(source_code)
 
@@ -574,7 +580,7 @@ class Parser:
       #Make sure there is at least one valid kernel argument
       if len(parser.kernel.get_arguments(uniform=False, array=False)) == 0:
         raise Exception('Kernel must take at least one non-uniform, non-array argument')
-      
+
       #The source code has been parsed, return the abstract kernel
       return parser.kernel
 
