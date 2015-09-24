@@ -21,6 +21,11 @@ class Compiler_Generic:
     for arg in k.get_arguments(uniform=True):
       src += 'const %s %s = args->%s;'%(options.type, arg.name, arg.name)
     src += ''
+    #Fuses
+    src += '//Fuses'
+    for arg in k.get_arguments(fuse=True):
+      src += 'bool %s_written = false;'%(arg.name)
+    src += ''
     #Literals
     src += '//Literals'
     for var in k.get_literals():
@@ -32,7 +37,7 @@ class Compiler_Generic:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables (numeric)'
-    vars = ['%s%s'%('*' if var.stride > 1 else '', var.name) for var in k.get_variables(mask=False, uniform=False, fuse=False)]
+    vars = ['%s%s'%('*' if var.stride > 1 else '', var.name) for var in k.get_variables(mask=False, uniform=False)]
     if len(vars) > 0:
       src += '%s %s;'%(options.type, ', '.join(vars))
     src += ''
@@ -70,6 +75,8 @@ class Compiler_Generic:
     src += '//Outputs'
     for arg in k.get_arguments(output=True, fuse=False):
       src += 'args->%s[index] = %s;'%(arg.name, arg.name)
+    for arg in k.get_arguments(output=True, fuse=True):
+      src += 'if(%s_written) args->%s[0] = %s;'%(arg.name, arg.name, arg.name)
     src += ''
     #End input loop
     src.unindent()
@@ -88,11 +95,10 @@ class Compiler_Generic:
         src += '//>>> %s'%(stmt.comment)
       elif isinstance(stmt, Assignment):
         if isinstance(stmt.expr, Variable):
+          src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
           if stmt.var.is_fuse:
-            #Write directly to output
-            src += 'args->%s[0] = %s;'%(stmt.var.name, stmt.expr.name)
-          else:
-            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
+            #Set the fuse's written flag
+            src += '%s_written = true;'%(stmt.var.name)
         elif stmt.vector_only:
           #Don't generate vector masks
           src += '%s = %s;'%(stmt.var.name, stmt.expr.left.name)

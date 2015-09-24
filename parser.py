@@ -383,13 +383,7 @@ class Parser:
     #Make or get the destination variable
     asst = None
     if isinstance(dst, ast.Name):
-      temp = self.kernel.get_variable(dst.id)
-      if temp is not None and temp.is_fuse:
-        #Fuses are written to directly
-        var = temp
-      else:
-        #Everything else gets and intermediate variable
-        var = self.add_variable(dst.id, is_mask=(expr.is_mask))
+      var = self.add_variable(dst.id, is_mask=(expr.is_mask))
     elif isinstance(dst, ast.Subscript):
       (var, asst) = self.subscript(block, dst)
     else:

@@ -40,6 +40,11 @@ class Compiler_Intel:
     for arg in k.get_arguments(uniform=True):
       trans.set('const %s %s'%(vecType, arg.name), 'args->%s'%(arg.name))
     src += ''
+    #Fuses
+    src += '//Fuses'
+    for arg in k.get_arguments(fuse=True):
+      trans.set('%s %s_written'%(vecType, arg.name), '0')
+    src += ''
     #Literals
     src += '//Literals'
     for var in k.get_literals():
@@ -51,8 +56,8 @@ class Compiler_Intel:
     src += ''
     #Temporary (stack) variables
     src += '//Stack variables'
-    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables(uniform=False, fuse=False, array=False)))
-    vars = ['*%s'%(var.name) for var in k.get_variables(uniform=False, fuse=False, array=True)]
+    src += '%s %s;'%(vecType, ', '.join(var.name for var in k.get_variables(uniform=False, array=False)))
+    vars = ['*%s'%(var.name) for var in k.get_variables(uniform=False, array=True)]
     if len(vars) > 0:
       src += '%s %s;'%(options.type, ', '.join(vars))
     src += ''
@@ -84,6 +89,9 @@ class Compiler_Intel:
     src += '//Outputs'
     for arg in k.get_arguments(output=True, fuse=False):
       trans.store('&args->%s[index]'%(arg.name), arg.name)
+    for arg in k.get_arguments(output=True, fuse=True):
+      for lane in range(size):
+        src += 'if(%s(%s_written, %d)) args->%s[0] = %s(%s, %d);'%(trans.extract, arg.name, lane, arg.name, trans.extract, arg.name, lane)
     src += ''
     #End input loop
     src.unindent()
@@ -106,17 +114,14 @@ class Compiler_Intel:
           input = stmt.expr.name
           if stmt.vector_only:
             mask = stmt.mask.name
+            trans.mask(input, output, mask)
             if stmt.var.is_fuse:
-              #Write directly to output
-              trans.fuse(input, output, mask)
-            else:
-              trans.mask(input, output, mask)
+              #Set the fuse's written flag
+              trans.mask('MASK_TRUE', output + '_written', mask)
           else:
+            src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
             if stmt.var.is_fuse:
-              #Write directly to output
-              trans.fuse(input, output, 'MASK_TRUE')
-            else:
-              src += '%s = %s;'%(stmt.var.name, stmt.expr.name)
+              raise Exception('Unexpected fuse')
         elif isinstance(stmt.expr, BinaryOperation):
           op = stmt.expr.op
           var = stmt.var.name
@@ -298,8 +303,6 @@ class Compiler_Intel:
     def store(self, *args):
       self.error()
     def mask(self, *args):
-      self.error()
-    def fuse(self, *args):
       self.error()
     #Python arithmetic operators
     def add(self, *args):
@@ -626,12 +629,6 @@ class Compiler_Intel:
     def mask(self, *args):
       (input, output, mask) = args
       self.mask_1_2(input, output, mask, '_mm_or_si128', '_mm_and_si128', '_mm_andnot_si128')
-    def fuse(self, *args):
-      (input, output, mask) = args
-      condition = ''
-      if mask != 'MASK_TRUE':
-        condition = 'if(!%s(%s, %s)) '%(self.all_zeroes, mask, mask)
-      self.src += '%sargs->%s[0] = %s(%s, 0);'%(condition, output, self.extract, input)
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm_add_epi32', args)
@@ -905,12 +902,6 @@ class Compiler_Intel:
     def mask(self, *args):
       (input, output, mask) = args
       self.mask_1_2(input, output, mask, '_mm256_or_si256', '_mm256_and_si256', '_mm256_andnot_si256')
-    def fuse(self, *args):
-      (input, output, mask) = args
-      condition = ''
-      if mask != 'MASK_TRUE':
-        condition = 'if(!%s(%s, %s)) '%(self.all_zeroes, mask, mask)
-      self.src += '%sargs->%s[0] = %s(%s, 0);'%(condition, output, self.extract, input)
     #Python arithmetic operators
     def add(self, *args):
       self.vector_1_2('_mm256_add_epi32', args)
