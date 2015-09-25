@@ -63,7 +63,7 @@ class Parser:
 
   #Parses a binary operation (AST BinOp)
   def binop(self, block, node, var=None):
-    if var == None:
+    if var is None:
       var = self.add_variable(None)
     left = self.expression(block, node.left)
     right = self.expression(block, node.right)
@@ -156,7 +156,7 @@ class Parser:
 
   #Parses a function call (AST Call)
   def call(self, block, expr, var):
-    if var == None:
+    if var is None:
       var = self.add_variable(None)
     if isinstance(expr.func, ast.Attribute):
       mod = expr.func.value.id
@@ -227,41 +227,58 @@ class Parser:
 
   #Parses a comparison (AST Compare)
   def compare(self, block, cmp, var=None):
-    if len(cmp.comparators) != 1:
-      raise Exception('Comparison requires exactly 1 right-side element')
-    if len(cmp.ops) != 1:
-      raise Exception('Comparison requires exactly 1 operator')
-    #Parse the left and right expressions
-    left = self.expression(block, cmp.left)
-    right = self.expression(block, cmp.comparators[0])
-    #Parse the operator
-    op = self.cmpop(cmp.ops[0])
-    #Create a temporary variable to store the result of the comparison
-    if var is None:
-      var = self.add_variable(None, is_mask=True)
-    comparison = ComparisonOperation(left, op, right)
-    assignment = Assignment(var, comparison)
-    block.add(assignment)
+    if len(cmp.ops) > 1:
+      #Chain multiple comparisons together (emulate a BoolOp)
+      boolop = ast.BoolOp()
+      boolop.op = ast.And()
+      boolop.values = []
+      left = cmp.left
+      for op, comp in zip(cmp.ops, cmp.comparators):
+        comparison = ast.Compare()
+        comparison.left = left
+        comparison.ops = [op]
+        comparison.comparators = [comp]
+        boolop.values.append(comparison)
+        left = comp
+      var = self.boolop(block, boolop, var)
+    else:
+      #Parse the left and right expressions
+      left = self.expression(block, cmp.left)
+      right = self.expression(block, cmp.comparators[0])
+      #Parse the operator
+      op = self.cmpop(cmp.ops[0])
+      #Create a temporary variable to store the result of the comparison
+      if var is None:
+        var = self.add_variable(None, is_mask=True)
+      comparison = ComparisonOperation(left, op, right)
+      assignment = Assignment(var, comparison)
+      block.add(assignment)
     return var
 
   #Parses a boolean operation (AST BoolOp)
   def boolop(self, block, node, var=None):
-    if len(node.values) != 2:
-      raise Exception('BoolOp requires exactly 2 operands')
-    if var == None:
-      var = self.add_variable(None, is_mask=True)
-    left = self.expression(block, node.values[0])
-    right = self.expression(block, node.values[1])
+    #Get the type of operation
     if isinstance(node.op, ast.And):
       op = Operator.bool_and
     elif isinstance(node.op, ast.Or):
       op = Operator.bool_or
     else:
       raise Exception('Unexpected BoolOp (%s)'%(node.op.__class__))
-    operation = BinaryOperation(left, op, right)
-    assignment = Assignment(var, operation)
-    block.add(assignment)
-    return var
+    #Chain operations together
+    left = self.expression(block, node.values[0])
+    for node_value in node.values[1:]:
+      right = self.expression(block, node_value)
+      operation = BinaryOperation(left, op, right)
+      if node_value == node.values[-1] and var is not None:
+        #The last operation in the chain should be assigned to this variable
+        temp_var = var
+      else:
+        #Create a temporary variable to store the intermediate result
+        temp_var = self.add_variable(None, is_mask=True)
+      assignment = Assignment(temp_var, operation)
+      block.add(assignment)
+      left = temp_var
+    return temp_var
 
   #Parses an array element (AST Subscript)
   def subscript(self, block, node):

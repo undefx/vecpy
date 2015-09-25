@@ -116,7 +116,7 @@ class Compiler_Generic:
             if DataType.is_floating(options.type):
               src += '%s = floor(%s / %s);'%(var, left, right)
             else:
-              src += '%s = %s / %s;'%(var, left, op, right)
+              src += '%s = %s / %s;'%(var, left, right)
           elif op == '%':
             if DataType.is_floating(options.type):
               src += '%s = fmod(%s, %s);'%(var, left, right)

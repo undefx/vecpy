@@ -285,6 +285,10 @@ class Compiler_Intel:
       output, left, right = args
       for i in range(self.size):
         self.src += '%s[%d] = %s(%s[%d], %s[%d]);'%(output, i, func, left, i, right, i)
+    def scalar_1_2_op(self, op, args):
+      output, left, right = args
+      for i in range(self.size):
+        self.src += '%s = %s(%s, %s(%s, %d) %s %s(%s, %d), %d);'%(output, self.insert, output, self.extract, left, i, op, self.extract, right, i, i)
     def mask_1_2(self, input, output, mask, or_, and_, andnot_):
       if mask == 'MASK_TRUE':
         self.src += '%s = %s;'%(output, input)
@@ -604,6 +608,7 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m128i'
       self.test = '_mm_movemask_epi8'
+      self.insert = '_mm_insert_epi32'
       self.extract = '_mm_extract_epi32'
       self.all_zeroes = '_mm_testz_si128'
     #Misc
@@ -636,6 +641,12 @@ class Compiler_Intel:
       self.vector_1_2('_mm_sub_epi32', args)
     def mul(self, *args):
       self.vector_1_2('_mm_mullo_epi32', args)
+    def div(self, *args):
+      self.scalar_1_2_op('/', args)
+    def floordiv(self, *args):
+      self.div(*args)
+    def mod(self, *args):
+      self.scalar_1_2_op('%', args)
     #Python comparison operators
     def eq(self, *args):
       self.vector_1_2('_mm_cmpeq_epi32', args)
@@ -877,6 +888,7 @@ class Compiler_Intel:
       Compiler_Intel.Translator.__init__(self, src, size)
       self.type = '__m256i'
       self.test = '_mm256_movemask_epi8'
+      self.insert = '_mm256_insert_epi32'
       self.extract = '_mm256_extract_epi32'
       self.all_zeroes = '_mm256_testz_si256'
     #Misc
@@ -909,6 +921,12 @@ class Compiler_Intel:
       self.vector_1_2('_mm256_sub_epi32', args)
     def mul(self, *args):
       self.vector_1_2('_mm256_mullo_epi32', args)
+    def div(self, *args):
+      self.scalar_1_2_op('/', args)
+    def floordiv(self, *args):
+      self.div(*args)
+    def mod(self, *args):
+      self.scalar_1_2_op('%', args)
     #Python comparison operators
     def eq(self, *args):
       self.vector_1_2('_mm256_cmpeq_epi32', args)
